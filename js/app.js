@@ -1593,6 +1593,7 @@ async function loadFromServer() {
     if (serverData.updated_at) {
       applyData(serverData);
       persistLocal(serverData.updated_at);
+      Sync.setServerTimestamp(serverData.updated_at);
       return;
     }
 
@@ -1630,6 +1631,12 @@ function startApp() {
 async function bootstrap() {
   if (Sync.isServerMode()) {
     await loadFromServer();
+    Sync.startPolling((data) => {
+      if (state.editingIndex !== -1 || state.isAiGenerating) return;
+      applyData(data);
+      persistLocal(data.updated_at);
+      render();
+    });
   } else {
     load();
   }

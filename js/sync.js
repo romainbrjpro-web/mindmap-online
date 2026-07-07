@@ -6,6 +6,8 @@ const Sync = {
   syncTimer: null,
   isSyncing: false,
   lastPayload: null,
+  lastServerUpdatedAt: 0,
+  pollTimer: null,
 
   get headers() {
     return { 'Content-Type': 'application/json' };
@@ -13,6 +15,10 @@ const Sync = {
 
   isServerMode() {
     return location.protocol !== 'file:';
+  },
+
+  setServerTimestamp(updatedAt) {
+    this.lastServerUpdatedAt = updatedAt ? Date.parse(updatedAt) : 0;
   },
 
   setStatus(state, text) {
@@ -43,6 +49,7 @@ const Sync = {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Erreur sauvegarde');
+    if (data.updated_at) this.setServerTimestamp(data.updated_at);
     return data;
   },
 
@@ -55,7 +62,7 @@ const Sync = {
       return;
     }
 
-    this.syncTimer = setTimeout(() => this.runSync(getPayload), 300);
+    this.syncTimer = setTimeout(() => this.runSync(getPayload), 200);
   },
 
   async runSync(getPayload) {
@@ -85,7 +92,24 @@ const Sync = {
       headers: this.headers,
       body: JSON.stringify(payload),
       keepalive: true,
-    }).catch((e) => console.error('Flush sync error:', e));
+    })
+      .then((res) => res.json())
+      .then((data) => { if (data.updated_at) this.setServerTimestamp(data.updated_at); })
+      .catch((e) => console.error('Flush sync error:', e));
+  },
+
+  startPolling(onRemoteUpdate) {
+    if (!this.isServerMode() || this.pollTimer) return;
+    this.pollTimer = setInterval(async () => {
+      try {
+        const data = await this.fetchData();
+        const serverTime = data.updated_at ? Date.parse(data.updated_at) : 0;
+        if (serverTime > this.lastServerUpdatedAt) {
+          this.setServerTimestamp(data.updated_at);
+          onRemoteUpdate(data);
+        }
+      } catch { /* ignore transient errors */ }
+    }, 4000);
   },
 };
 
