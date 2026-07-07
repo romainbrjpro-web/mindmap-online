@@ -84,6 +84,31 @@ function getStorageInfo() {
   };
 }
 
+const DEFAULT_USER_ID = 1;
+
+function ensureDefaultUser() {
+  const store = loadStore();
+  if (!store.users.length) {
+    store.users.push({
+      id: DEFAULT_USER_ID,
+      email: 'default@mindmap.local',
+      password_hash: '',
+      created_at: new Date().toISOString(),
+    });
+    store.mindmap_data[DEFAULT_USER_ID] = {
+      positions: '[]',
+      notes: '{}',
+      history: '[]',
+      settings: '{}',
+      updated_at: new Date().toISOString(),
+    };
+    saveStore(store);
+  }
+  return DEFAULT_USER_ID;
+}
+
+ensureDefaultUser();
+
 const stmts = {
   createUser(email, passwordHash) {
     const store = loadStore();
@@ -157,4 +182,4 @@ const stmts = {
   },
 };
 
-module.exports = { stmts, bcrypt, getStorageInfo, dataDir };
+module.exports = { stmts, bcrypt, getStorageInfo, dataDir, DEFAULT_USER_ID, ensureDefaultUser };

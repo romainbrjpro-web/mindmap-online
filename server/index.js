@@ -4,7 +4,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
-const { stmts, getStorageInfo, dataDir } = require('./db');
+const { stmts, getStorageInfo, dataDir, DEFAULT_USER_ID } = require('./db');
 const { generateNote } = require('./ai');
 
 const app = express();
@@ -78,10 +78,10 @@ app.get('/api/auth/me', authMiddleware, (req, res) => {
   res.json({ email: user.email });
 });
 
-// ─── Data sync ───────────────────────────────────────────────────────────────
+// ─── Data sync (sans connexion — utilisateur unique) ─────────────────────────
 
-app.get('/api/data', authMiddleware, (req, res) => {
-  const row = stmts.getData(req.user.userId);
+app.get('/api/data', (req, res) => {
+  const row = stmts.getData(DEFAULT_USER_ID);
   if (!row) {
     return res.json({
       positions: [],
@@ -101,37 +101,37 @@ app.get('/api/data', authMiddleware, (req, res) => {
   });
 });
 
-app.put('/api/data', authMiddleware, (req, res) => {
+app.put('/api/data', (req, res) => {
   const { positions, notes, history, settings } = req.body;
   if (!Array.isArray(positions) || typeof notes !== 'object') {
     return res.status(400).json({ error: 'Données invalides' });
   }
 
   stmts.upsertData(
-    req.user.userId,
+    DEFAULT_USER_ID,
     JSON.stringify(positions),
     JSON.stringify(notes || {}),
     JSON.stringify(history || []),
     JSON.stringify(settings || {}),
   );
 
-  const row = stmts.getData(req.user.userId);
+  const row = stmts.getData(DEFAULT_USER_ID);
   res.json({ ok: true, updated_at: row.updated_at });
 });
 
-app.get('/api/data/backup', authMiddleware, (req, res) => {
-  const data = stmts.exportUserData(req.user.userId);
+app.get('/api/data/backup', (req, res) => {
+  const data = stmts.exportUserData(DEFAULT_USER_ID);
   if (!data) return res.status(404).json({ error: 'Aucune donnée' });
   res.setHeader('Content-Disposition', `attachment; filename="mindmap-backup-${Date.now()}.json"`);
   res.json(data);
 });
 
-app.post('/api/data/restore', authMiddleware, (req, res) => {
+app.post('/api/data/restore', (req, res) => {
   const { positions, notes, history, settings } = req.body;
   if (!Array.isArray(positions)) {
     return res.status(400).json({ error: 'Fichier de sauvegarde invalide' });
   }
-  stmts.importUserData(req.user.userId, { positions, notes, history, settings });
+  stmts.importUserData(DEFAULT_USER_ID, { positions, notes, history, settings });
   res.json({ ok: true });
 });
 
@@ -141,7 +141,7 @@ app.get('/api/health', (_req, res) => {
 
 // ─── AI Generation (proxy — évite CORS navigateur) ───────────────────────────
 
-app.post('/api/ai/generate', authMiddleware, async (req, res) => {
+app.post('/api/ai/generate', async (req, res) => {
   const { word, deepseekKey, openaiKey } = req.body;
   if (!word?.trim()) {
     return res.status(400).json({ error: 'Mot requis' });

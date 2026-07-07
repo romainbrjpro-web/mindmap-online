@@ -810,7 +810,7 @@ $('#btn-diaporama').addEventListener('click', openDiaporamaPage);
 $('#btn-all-notes').addEventListener('click', openAllNotesPage);
 $('#btn-export').addEventListener('click', exportData);
 $('#btn-settings').addEventListener('click', openSettingsPage);
-$('#btn-account').addEventListener('click', openAccountPage);
+$('#btn-backup').addEventListener('click', openBackupPage);
 
 // ─── Note View ───────────────────────────────────────────────────────────────
 
@@ -1388,13 +1388,8 @@ function openSettingsPage() {
 async function generateAI() {
   if (state.isAiGenerating || state.editingIndex === -1) return;
 
-  if (location.protocol === 'file:') {
-    showToast('Lancez le serveur (npm start) pour utiliser l\'IA');
-    return;
-  }
-
-  if (!Sync.isLoggedIn()) {
-    showToast('Connectez-vous pour utiliser la génération IA');
+  if (!Sync.isServerMode()) {
+    showToast('Lancez le serveur pour utiliser l\'IA');
     return;
   }
 
@@ -1504,30 +1499,24 @@ window.App = {
   resetTimer: () => { timerSeconds = 0; timerRunning = false; },
 };
 
-// ─── Account ─────────────────────────────────────────────────────────────────
+// ─── Backup ──────────────────────────────────────────────────────────────────
 
-function openAccountPage() {
+function openBackupPage() {
   const page = $('#page-account');
   page.innerHTML = `
     <div class="page-header">
-      <h1>Mon compte</h1>
-      <button class="btn-icon" id="close-account">❌</button>
-    </div>
-    <div class="list-item" style="margin-bottom:16px">
-      <p style="opacity:0.6;font-size:13px">Connecté en tant que</p>
-      <p style="font-weight:600;font-size:18px">${escapeHtml(Sync.email || '—')}</p>
+      <h1>Sauvegarde</h1>
+      <button class="btn-icon" id="close-backup">❌</button>
     </div>
     <p style="opacity:0.7;font-size:14px;margin-bottom:16px">
-      ☁️ Vos notes sont sauvegardées sur le serveur à chaque modification.<br>
-      💾 Des copies de sécurité automatiques sont créées côté serveur.
+      ☁️ Vos notes sont sauvegardées automatiquement sur le serveur.
     </p>
     <button class="btn btn-primary btn-block" id="btn-cloud-backup" style="margin-bottom:8px">📥 Télécharger ma sauvegarde</button>
     <button class="btn btn-secondary btn-block" id="btn-cloud-restore" style="margin-bottom:16px">📂 Restaurer une sauvegarde</button>
     <input type="file" id="restore-file" accept=".json" style="display:none">
-    <button class="btn btn-danger btn-block" id="btn-logout">Se déconnecter</button>
   `;
   page.classList.remove('hidden');
-  $('#close-account').addEventListener('click', () => page.classList.add('hidden'));
+  $('#close-backup').addEventListener('click', () => page.classList.add('hidden'));
   $('#btn-cloud-backup').addEventListener('click', async () => {
     try {
       const res = await fetch('/api/data/backup', { headers: Sync.headers });
@@ -1567,71 +1556,9 @@ function openAccountPage() {
       showToast('Erreur: ' + err.message);
     }
   });
-  $('#btn-logout').addEventListener('click', () => {
-    Sync.clearAuth();
-    page.classList.add('hidden');
-    showAuthScreen();
-  });
 }
 
-// ─── Auth UI ─────────────────────────────────────────────────────────────────
-
-let authMode = 'login';
-
-function showAuthScreen() {
-  $('#page-auth').classList.remove('hidden');
-}
-
-function hideAuthScreen() {
-  $('#page-auth').classList.add('hidden');
-}
-
-function initAuthUI() {
-  const tabLogin = $('#tab-login');
-  const tabRegister = $('#tab-register');
-  const submitBtn = $('#auth-submit');
-  const errorEl = $('#auth-error');
-
-  function setMode(mode) {
-    authMode = mode;
-    tabLogin.classList.toggle('active', mode === 'login');
-    tabRegister.classList.toggle('active', mode === 'register');
-    submitBtn.textContent = mode === 'login' ? 'Se connecter' : 'Créer un compte';
-    errorEl.classList.add('hidden');
-  }
-
-  tabLogin.addEventListener('click', () => setMode('login'));
-  tabRegister.addEventListener('click', () => setMode('register'));
-
-  submitBtn.addEventListener('click', async () => {
-    const email = $('#auth-email').value.trim();
-    const password = $('#auth-password').value;
-    errorEl.classList.add('hidden');
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Chargement…';
-
-    try {
-      if (authMode === 'login') {
-        await Sync.login(email, password);
-      } else {
-        await Sync.register(email, password);
-      }
-      await onAuthenticated();
-    } catch (e) {
-      errorEl.textContent = e.message;
-      errorEl.classList.remove('hidden');
-    } finally {
-      submitBtn.disabled = false;
-      submitBtn.textContent = authMode === 'login' ? 'Se connecter' : 'Créer un compte';
-    }
-  });
-
-  $('#auth-password').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') submitBtn.click();
-  });
-}
-
-async function onAuthenticated() {
+async function loadFromServer() {
   try {
     const serverData = await Sync.fetchData();
     const hasServerData = serverData.positions?.length > 0 || Object.keys(serverData.notes || {}).length > 0;
@@ -1646,12 +1573,9 @@ async function onAuthenticated() {
       initDefaultData();
       await Sync.pushData(getSyncPayload());
     }
-    hideAuthScreen();
-    startApp();
-    showToast(`Bienvenue ${Sync.email}`);
   } catch (e) {
-    showToast('Erreur de chargement');
-    console.error(e);
+    load();
+    console.error('Server load failed, using local:', e);
   }
 }
 
@@ -1664,26 +1588,12 @@ function startApp() {
 }
 
 async function bootstrap() {
-  initAuthUI();
-
-  if (location.protocol === 'file:') {
+  if (Sync.isServerMode()) {
+    await loadFromServer();
+  } else {
     load();
-    hideAuthScreen();
-    startApp();
-    showToast('Mode local — lancez le serveur pour la sync cloud');
-    return;
   }
-
-  if (Sync.isLoggedIn()) {
-    try {
-      await onAuthenticated();
-      return;
-    } catch {
-      Sync.clearAuth();
-    }
-  }
-
-  showAuthScreen();
+  startApp();
 }
 
 // ─── Init ──────────────────────────────────────────────────────────────────────

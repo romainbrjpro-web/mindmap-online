@@ -1,36 +1,17 @@
 /**
- * Server sync — authentification et synchronisation cloud
+ * Server sync — sauvegarde cloud sans connexion
  */
 
 const Sync = {
-  token: localStorage.getItem('mindmap_token') || null,
-  email: localStorage.getItem('mindmap_email') || null,
   syncTimer: null,
   isSyncing: false,
 
   get headers() {
-    return {
-      'Content-Type': 'application/json',
-      ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
-    };
+    return { 'Content-Type': 'application/json' };
   },
 
-  setAuth(token, email) {
-    this.token = token;
-    this.email = email;
-    localStorage.setItem('mindmap_token', token);
-    localStorage.setItem('mindmap_email', email);
-  },
-
-  clearAuth() {
-    this.token = null;
-    this.email = null;
-    localStorage.removeItem('mindmap_token');
-    localStorage.removeItem('mindmap_email');
-  },
-
-  isLoggedIn() {
-    return !!this.token;
+  isServerMode() {
+    return location.protocol !== 'file:';
   },
 
   setStatus(state, text) {
@@ -43,30 +24,6 @@ const Sync = {
     }
     el.classList.add(state);
     el.textContent = text;
-  },
-
-  async register(email, password) {
-    const res = await fetch('/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Erreur inscription');
-    this.setAuth(data.token, data.email);
-    return data;
-  },
-
-  async login(email, password) {
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Erreur connexion');
-    this.setAuth(data.token, data.email);
-    return data;
   },
 
   async fetchData() {
@@ -88,7 +45,7 @@ const Sync = {
   },
 
   scheduleSync(getPayload) {
-    if (!this.isLoggedIn()) return;
+    if (!this.isServerMode()) return;
     clearTimeout(this.syncTimer);
     this.syncTimer = setTimeout(async () => {
       if (this.isSyncing) return;
