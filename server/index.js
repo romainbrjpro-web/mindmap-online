@@ -176,7 +176,11 @@ app.get('*', (req, res, next) => {
 });
 
 async function start() {
-  await init();
+  try {
+    await init();
+  } catch (e) {
+    console.error('Init échouée, démarrage en mode fichier:', e.message);
+  }
 
   app.listen(PORT, HOST, async () => {
     const info = await getStorageInfo();

@@ -26,6 +26,7 @@ databases:
     databaseName: mindmap
     user: mindmap
 
-# PostgreSQL gratuit Render : 1 Go, persistant entre redéploiements.
-# ⚠️ Expire après 30 jours — passez en plan payant (basic-256mb ~7$/mois) pour la prod.
-# Alternative gratuite permanente : Neon.tech → copiez DATABASE_URL dans les variables Render.
+# Si le déploiement échoue (limite 1 base gratuite), supprimez le bloc
+# "databases" ci-dessus et la variable DATABASE_URL du service web.
+# Le site démarrera quand même (stockage fichier temporaire).
+# Pour une base permanente gratuite : Neon.tech → DATABASE_URL dans Render.

@@ -20,7 +20,11 @@ async function initPostgres(connectionString) {
     connectionString,
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
     max: 10,
+    connectionTimeoutMillis: 5000,
   });
+
+  // Test connexion rapide — évite de bloquer le démarrage (502 Render)
+  await pool.query('SELECT 1');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS mindmap_data (
@@ -367,7 +371,12 @@ let activeStmts = jsonStmts;
 async function init() {
   if (process.env.DATABASE_URL) {
     try {
-      await initPostgres(process.env.DATABASE_URL);
+      await Promise.race([
+        initPostgres(process.env.DATABASE_URL),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout connexion PostgreSQL (8s)')), 8000),
+        ),
+      ]);
       activeStmts = pgStmts;
       return;
     } catch (e) {
