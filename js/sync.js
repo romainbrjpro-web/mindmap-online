@@ -5,6 +5,7 @@
 const Sync = {
   syncTimer: null,
   isSyncing: false,
+  lastPayload: null,
 
   get headers() {
     return { 'Content-Type': 'application/json' };
@@ -34,6 +35,7 @@ const Sync = {
   },
 
   async pushData(payload) {
+    this.lastPayload = payload;
     const res = await fetch('/api/data', {
       method: 'PUT',
       headers: this.headers,
@@ -44,23 +46,56 @@ const Sync = {
     return data;
   },
 
-  scheduleSync(getPayload) {
+  scheduleSync(getPayload, immediate = false) {
     if (!this.isServerMode()) return;
     clearTimeout(this.syncTimer);
-    this.syncTimer = setTimeout(async () => {
-      if (this.isSyncing) return;
-      this.isSyncing = true;
-      this.setStatus('syncing', '☁️ Sync…');
-      try {
-        await this.pushData(getPayload());
-        this.setStatus('synced', '☁️ Sync ✓');
-        setTimeout(() => this.setStatus('hidden'), 2000);
-      } catch (e) {
-        this.setStatus('error', '☁️ Erreur');
-        console.error('Sync error:', e);
-      } finally {
-        this.isSyncing = false;
-      }
-    }, 800);
+
+    if (immediate) {
+      this.runSync(getPayload);
+      return;
+    }
+
+    this.syncTimer = setTimeout(() => this.runSync(getPayload), 300);
+  },
+
+  async runSync(getPayload) {
+    if (this.isSyncing) return;
+    this.isSyncing = true;
+    this.setStatus('syncing', '☁️ Sync…');
+    try {
+      const payload = typeof getPayload === 'function' ? getPayload() : getPayload;
+      await this.pushData(payload);
+      this.setStatus('synced', '☁️ Sync ✓');
+      setTimeout(() => this.setStatus('hidden'), 2000);
+    } catch (e) {
+      this.setStatus('error', '☁️ Erreur sync');
+      console.error('Sync error:', e);
+    } finally {
+      this.isSyncing = false;
+    }
+  },
+
+  flushSync(getPayload) {
+    if (!this.isServerMode()) return;
+    clearTimeout(this.syncTimer);
+    const payload = typeof getPayload === 'function' ? getPayload() : getPayload;
+    this.lastPayload = payload;
+    fetch('/api/data', {
+      method: 'PUT',
+      headers: this.headers,
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch((e) => console.error('Flush sync error:', e));
   },
 };
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => {
+    if (Sync.lastPayload) Sync.flushSync(Sync.lastPayload);
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && Sync.lastPayload) {
+      Sync.flushSync(Sync.lastPayload);
+    }
+  });
+}

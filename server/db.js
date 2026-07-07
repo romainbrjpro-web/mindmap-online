@@ -366,16 +366,24 @@ let activeStmts = jsonStmts;
 
 async function init() {
   if (process.env.DATABASE_URL) {
-    await initPostgres(process.env.DATABASE_URL);
-    activeStmts = pgStmts;
-    return;
+    try {
+      await initPostgres(process.env.DATABASE_URL);
+      activeStmts = pgStmts;
+      return;
+    } catch (e) {
+      console.error('❌ PostgreSQL indisponible, fallback fichier:', e.message);
+      if (pool) {
+        try { await pool.end(); } catch { /* ignore */ }
+        pool = null;
+      }
+    }
   }
 
   ensureDirs();
   ensureDefaultUserJson();
   storageMode = 'json';
   activeStmts = jsonStmts;
-  console.warn('⚠️  Pas de DATABASE_URL — stockage fichier (NON persistant sur Render)');
+  console.warn('⚠️  Stockage fichier (NON persistant sur Render sans DATABASE_URL)');
 }
 
 function ensureDefaultUser() {

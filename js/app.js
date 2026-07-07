@@ -84,6 +84,25 @@ function applyData(data) {
   preserveLocalApiKeys();
 }
 
+function buildLocalData(updatedAt) {
+  return {
+    positions: state.positions,
+    notes: state.notes,
+    history: state.history,
+    zoom: state.zoom,
+    offsetX: state.offsetX,
+    offsetY: state.offsetY,
+    isDark: state.isDark,
+    diaporamaList: state.diaporamaList,
+    apiKeys: state.apiKeys,
+    _updatedAt: updatedAt || new Date().toISOString(),
+  };
+}
+
+function persistLocal(updatedAt) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(buildLocalData(updatedAt)));
+}
+
 function preserveLocalApiKeys() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -94,20 +113,24 @@ function preserveLocalApiKeys() {
   } catch { /* ignore */ }
 }
 
-function save() {
-  const data = {
-    positions: state.positions,
-    notes: state.notes,
-    history: state.history,
-    zoom: state.zoom,
-    offsetX: state.offsetX,
-    offsetY: state.offsetY,
-    isDark: state.isDark,
-    diaporamaList: state.diaporamaList,
-    apiKeys: state.apiKeys,
-  };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  Sync.scheduleSync(getSyncPayload);
+function save(options = {}) {
+  pruneOrphanNotes();
+  const updatedAt = new Date().toISOString();
+  persistLocal(updatedAt);
+  Sync.scheduleSync(getSyncPayload, options.immediate);
+}
+
+function pruneOrphanNotes() {
+  const words = new Set(state.positions.map((p) => p.word.toLowerCase()));
+  Object.keys(state.notes).forEach((key) => {
+    if (!words.has(key)) delete state.notes[key];
+  });
+}
+
+function removeNotesForWords(words) {
+  words.forEach((word) => {
+    delete state.notes[word.toLowerCase()];
+  });
 }
 
 function load() {
@@ -518,9 +541,11 @@ function showWordActionsMenu(index) {
     { label: 'Annuler', action: 'close' },
     { label: 'Supprimer', action: 'delete', class: 'btn-danger', onClick: () => {
       const toRemove = [...state.selected].sort((a, b) => b - a);
+      const removedWords = toRemove.map((i) => state.positions[i]?.word).filter(Boolean);
       toRemove.forEach(i => state.positions.splice(i, 1));
+      removeNotesForWords(removedWords);
       state.selected = new Set();
-      save();
+      save({ immediate: true });
       hideModal();
       render();
     }},
@@ -1119,8 +1144,10 @@ function showNoteListActions(index) {
     ]);
   });
   $('#delete-note').addEventListener('click', () => {
+    const word = pos.word;
     state.positions.splice(index, 1);
-    save();
+    removeNotesForWords([word]);
+    save({ immediate: true });
     hideModal();
     openAllNotesPage();
   });
@@ -1561,17 +1588,41 @@ function openBackupPage() {
 async function loadFromServer() {
   try {
     const serverData = await Sync.fetchData();
-    const hasServerData = serverData.positions?.length > 0 || Object.keys(serverData.notes || {}).length > 0;
-    const hasLocalData = localStorage.getItem(STORAGE_KEY);
+    let localData = null;
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) localData = JSON.parse(raw);
+    } catch { /* ignore */ }
 
-    if (hasServerData) {
+    const serverTime = serverData.updated_at ? Date.parse(serverData.updated_at) : 0;
+    const localTime = localData?._updatedAt ? Date.parse(localData._updatedAt) : 0;
+
+    // Migration : anciennes données locales sans horodatage → pousser vers le serveur
+    if (localData && !localData._updatedAt) {
+      applyData(localData);
+      await Sync.pushData(getSyncPayload());
+      persistLocal(new Date().toISOString());
+      return;
+    }
+
+    // Les modifications locales récentes priment (y compris une carte vide)
+    if (localData?._updatedAt && localTime >= serverTime) {
+      applyData(localData);
+      await Sync.pushData(getSyncPayload());
+      return;
+    }
+
+    const serverHasData =
+      (serverData.positions?.length > 0) || (Object.keys(serverData.notes || {}).length > 0);
+
+    if (serverHasData) {
       applyData(serverData);
-    } else if (hasLocalData) {
-      load();
+      persistLocal(serverData.updated_at || new Date().toISOString());
+    } else if (localData) {
+      applyData(localData);
       await Sync.pushData(getSyncPayload());
     } else {
       initDefaultData();
-      await Sync.pushData(getSyncPayload());
     }
   } catch (e) {
     load();
