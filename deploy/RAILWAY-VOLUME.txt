@@ -1,0 +1,8 @@
+# Railway — persistance des notes
+#
+# Après déploiement, ajoutez un Volume :
+#   Railway → votre service → Settings → Volumes → Add Volume
+#   Mount Path : /app/server/data
+#
+# Variable d'environnement (optionnel) :
+#   DATA_DIR=/app/server/data

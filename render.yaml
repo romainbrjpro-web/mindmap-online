@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: mindmap
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /opt/render/project/src/server/data
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+    disk:
+      name: mindmap-data
+      mountPath: /opt/render/project/src/server/data
+      sizeGB: 1

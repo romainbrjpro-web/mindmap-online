@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>MindMap & Notes Sync</title>
+  <link rel="icon" href="assets/logo-mindmap.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/logo-mindmap.svg">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body class="dark">
+  <div id="app">
+    <!-- Mind Map Canvas -->
+    <canvas id="mindmap-canvas"></canvas>
+
+    <!-- Search Bar -->
+    <div class="search-bar" id="search-bar">
+      <img src="assets/logo-mindmap.svg" alt="" class="search-logo" aria-hidden="true">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="search-input" placeholder="MindMap search..." autocomplete="off">
+      <button class="btn-icon hidden" id="search-clear">✕</button>
+      <div class="search-results hidden" id="search-results"></div>
+    </div>
+
+    <!-- Auth Screen -->
+    <div class="page-overlay" id="page-auth">
+      <div class="auth-box">
+        <img src="assets/logo-mindmap.svg" alt="MindMap" class="site-logo">
+        <h1>MindMap & Notes</h1>
+        <p class="auth-subtitle">Connectez-vous pour synchroniser vos notes sur tous vos appareils</p>
+        <div class="auth-tabs">
+          <button class="auth-tab active" id="tab-login">Connexion</button>
+          <button class="auth-tab" id="tab-register">Inscription</button>
+        </div>
+        <input type="email" id="auth-email" placeholder="Email" autocomplete="email">
+        <input type="password" id="auth-password" placeholder="Mot de passe (6+ caractères)" autocomplete="current-password">
+        <p class="auth-error hidden" id="auth-error"></p>
+        <button class="btn btn-primary btn-block" id="auth-submit">Se connecter</button>
+        <p class="auth-hint">Vos données seront synchronisées entre iPhone, iPad, ordinateur…</p>
+      </div>
+    </div>
+
+    <!-- Sync Status -->
+    <div class="sync-status hidden" id="sync-status">☁️ Sync</div>
+
+    <!-- Action Buttons -->
+    <div class="action-buttons">
+      <button class="fab" id="btn-lasso" title="Sélection multiple">🟦</button>
+      <button class="fab" id="btn-theme" title="Thème">☀️</button>
+      <button class="fab" id="btn-history" title="Historique">🕒</button>
+      <button class="fab" id="btn-diaporama" title="Diaporama">📽️</button>
+      <button class="fab" id="btn-all-notes" title="Toutes les notes">📜</button>
+      <button class="fab" id="btn-export" title="Exporter">📥</button>
+      <button class="fab" id="btn-settings" title="Paramètres API">⚙️</button>
+      <button class="fab" id="btn-account" title="Compte">👤</button>
+    </div>
+
+    <!-- Zoom Indicator -->
+    <div class="zoom-indicator" id="zoom-indicator">Zoom: 1.0x</div>
+
+    <!-- Help Text -->
+    <div class="help-text">
+      <div>👆 Tap word = hear & select</div>
+      <div>👆 Tap selected = open note 📝</div>
+      <div>👆👆 Double click empty = add word</div>
+      <div>⏳ Long press word = actions ✋</div>
+    </div>
+
+    <!-- Modal Overlay -->
+    <div class="modal-overlay hidden" id="modal-overlay">
+      <div class="modal" id="modal-content"></div>
+    </div>
+
+    <!-- Page Overlays -->
+    <div class="page-overlay hidden" id="page-history"></div>
+    <div class="page-overlay hidden" id="page-all-notes"></div>
+    <div class="page-overlay hidden" id="page-diaporama"></div>
+    <div class="page-overlay hidden" id="page-note"></div>
+    <div class="page-overlay hidden" id="page-settings"></div>
+    <div class="page-overlay hidden" id="page-account"></div>
+
+    <!-- Diaporama Control Bar -->
+    <div class="diaporama-controls hidden" id="diaporama-controls">
+      <button class="btn-icon" id="dia-prev">⏮️</button>
+      <span id="dia-counter">1 / 1</span>
+      <button class="btn-icon" id="dia-next">⏭️</button>
+      <span class="divider"></span>
+      <button class="btn-icon" id="dia-pause">⏸️</button>
+      <span class="divider"></span>
+      <button class="btn-icon" id="dia-stop">⏹️</button>
+    </div>
+    <div class="diaporama-progress hidden" id="diaporama-progress"></div>
+
+    <!-- Toast -->
+    <div class="toast hidden" id="toast"></div>
+  </div>
+
+  <script src="js/sync.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
