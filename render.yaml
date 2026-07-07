@@ -17,7 +17,8 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
-    disk:
-      name: mindmap-data
-      mountPath: /opt/render/project/src/server/data
-      sizeGB: 1
+
+# Note : le disque persistant nécessite le plan Starter (~7$/mois).
+# Plan gratuit : notes conservées tant que le service tourne + sauvegardes via 👤 Mon compte.
+# Pour ajouter un disque : Render → mindmap → Settings → Upgrade to Starter → Disks → Add Disk
+#   Mount path : /opt/render/project/src/server/data
