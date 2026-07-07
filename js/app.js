@@ -1536,7 +1536,7 @@ function openBackupPage() {
       <button class="btn-icon" id="close-backup">❌</button>
     </div>
     <p style="opacity:0.7;font-size:14px;margin-bottom:16px">
-      ☁️ Vos notes et photos sont sauvegardées automatiquement dans la base de données PostgreSQL.
+      ☁️ Vos notes et photos sont sauvegardées automatiquement sur le serveur.
     </p>
     <button class="btn btn-primary btn-block" id="btn-cloud-backup" style="margin-bottom:8px">📥 Télécharger ma sauvegarde</button>
     <button class="btn btn-secondary btn-block" id="btn-cloud-restore" style="margin-bottom:16px">📂 Restaurer une sauvegarde</button>

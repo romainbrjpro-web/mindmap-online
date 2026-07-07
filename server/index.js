@@ -46,15 +46,13 @@ app.post('/api/auth/register', async (req, res) => {
   }
 
   const normalized = email.trim().toLowerCase();
-  if (await stmts.findUserByEmail(normalized)) {
+  if (stmts.findUserByEmail(normalized)) {
     return res.status(409).json({ error: 'Cet email est déjà utilisé' });
   }
 
   const hash = await bcrypt.hash(password, 10);
-  const result = await stmts.createUser(normalized, hash);
-  const userId = result.lastInsertRowid;
-
-  const token = signToken(userId, normalized);
+  const result = stmts.createUser(normalized, hash);
+  const token = signToken(result.lastInsertRowid, normalized);
   res.json({ token, email: normalized });
 });
 
@@ -64,7 +62,7 @@ app.post('/api/auth/login', async (req, res) => {
     return res.status(400).json({ error: 'Email et mot de passe requis' });
   }
 
-  const user = await stmts.findUserByEmail(email.trim().toLowerCase());
+  const user = stmts.findUserByEmail(email.trim().toLowerCase());
   if (!user || !(await bcrypt.compare(password, user.password_hash))) {
     return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
   }
@@ -72,16 +70,16 @@ app.post('/api/auth/login', async (req, res) => {
   res.json({ token: signToken(user.id, user.email), email: user.email });
 });
 
-app.get('/api/auth/me', authMiddleware, async (req, res) => {
-  const user = await stmts.findUserById(req.user.userId);
+app.get('/api/auth/me', authMiddleware, (req, res) => {
+  const user = stmts.findUserById(req.user.userId);
   if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
   res.json({ email: user.email });
 });
 
-// ─── Data sync (sans connexion — utilisateur unique) ─────────────────────────
+// ─── Data sync ───────────────────────────────────────────────────────────────
 
-app.get('/api/data', async (req, res) => {
-  const row = await stmts.getData(DEFAULT_USER_ID);
+app.get('/api/data', (req, res) => {
+  const row = stmts.getData(DEFAULT_USER_ID);
   if (!row) {
     return res.json({
       positions: [],
@@ -101,13 +99,13 @@ app.get('/api/data', async (req, res) => {
   });
 });
 
-app.put('/api/data', async (req, res) => {
+app.put('/api/data', (req, res) => {
   const { positions, notes, history, settings } = req.body;
   if (!Array.isArray(positions) || typeof notes !== 'object') {
     return res.status(400).json({ error: 'Données invalides' });
   }
 
-  await stmts.upsertData(
+  stmts.upsertData(
     DEFAULT_USER_ID,
     JSON.stringify(positions),
     JSON.stringify(notes || {}),
@@ -115,32 +113,31 @@ app.put('/api/data', async (req, res) => {
     JSON.stringify(settings || {}),
   );
 
-  const row = await stmts.getData(DEFAULT_USER_ID);
+  const row = stmts.getData(DEFAULT_USER_ID);
   res.json({ ok: true, updated_at: row.updated_at });
 });
 
-app.get('/api/data/backup', async (req, res) => {
-  const data = await stmts.exportUserData(DEFAULT_USER_ID);
+app.get('/api/data/backup', (req, res) => {
+  const data = stmts.exportUserData(DEFAULT_USER_ID);
   if (!data) return res.status(404).json({ error: 'Aucune donnée' });
   res.setHeader('Content-Disposition', `attachment; filename="mindmap-backup-${Date.now()}.json"`);
   res.json(data);
 });
 
-app.post('/api/data/restore', async (req, res) => {
+app.post('/api/data/restore', (req, res) => {
   const { positions, notes, history, settings } = req.body;
   if (!Array.isArray(positions)) {
     return res.status(400).json({ error: 'Fichier de sauvegarde invalide' });
   }
-  await stmts.importUserData(DEFAULT_USER_ID, { positions, notes, history, settings });
+  stmts.importUserData(DEFAULT_USER_ID, { positions, notes, history, settings });
   res.json({ ok: true });
 });
 
-app.get('/api/health', async (_req, res) => {
-  const storage = await getStorageInfo();
-  res.json({ status: 'ok', storage });
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', storage: getStorageInfo() });
 });
 
-// ─── AI Generation (proxy — évite CORS navigateur) ───────────────────────────
+// ─── AI Generation ─────────────────────────────────────────────────────────────
 
 app.post('/api/ai/generate', async (req, res) => {
   const { word, deepseekKey, openaiKey } = req.body;
@@ -175,29 +172,16 @@ app.get('*', (req, res, next) => {
   res.sendFile(path.join(ROOT, 'index.html'));
 });
 
-async function start() {
-  try {
-    await init();
-  } catch (e) {
-    console.error('Init échouée, démarrage en mode fichier:', e.message);
+init();
+
+app.listen(PORT, HOST, () => {
+  const info = getStorageInfo();
+  console.log(`MindMap server → http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
+  console.log(`💾 ${info.noteCount} note(s), ${info.wordCount} mot(s), ${info.backupCount} backup(s)`);
+  if (!info.persistent) {
+    console.warn('⚠️  Pas de disque persistant — les données seront perdues au redéploiement');
   }
-
-  app.listen(PORT, HOST, async () => {
-    const info = await getStorageInfo();
-    console.log(`MindMap server → http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
-    if (info.mode === 'postgresql') {
-      console.log(`🗄️  PostgreSQL — ${info.noteCount} note(s), ${info.wordCount} mot(s), ${info.backupCount} backup(s)`);
-    } else {
-      console.log(`📁 Fichier local : ${dataDir}`);
-      console.warn('⚠️  Définissez DATABASE_URL pour une persistance permanente');
-    }
-    if (JWT_SECRET === 'change-me-in-production') {
-      console.warn('⚠️  Définissez JWT_SECRET dans .env pour la production');
-    }
-  });
-}
-
-start().catch((e) => {
-  console.error('Échec démarrage serveur:', e);
-  process.exit(1);
+  if (JWT_SECRET === 'change-me-in-production') {
+    console.warn('⚠️  Définissez JWT_SECRET dans .env pour la production');
+  }
 });
