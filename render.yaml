@@ -9,16 +9,23 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: DATA_DIR
-        value: /opt/render/project/src/server/data
       - key: JWT_SECRET
         generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mindmap-db
+          property: connectionString
       - key: DEEPSEEK_API_KEY
         sync: false
       - key: OPENAI_API_KEY
         sync: false
 
-# Note : le disque persistant nécessite le plan Starter (~7$/mois).
-# Plan gratuit : notes conservées tant que le service tourne + sauvegardes via 👤 Mon compte.
-# Pour ajouter un disque : Render → mindmap → Settings → Upgrade to Starter → Disks → Add Disk
-#   Mount path : /opt/render/project/src/server/data
+databases:
+  - name: mindmap-db
+    plan: free
+    databaseName: mindmap
+    user: mindmap
+
+# PostgreSQL gratuit Render : 1 Go, persistant entre redéploiements.
+# ⚠️ Expire après 30 jours — passez en plan payant (basic-256mb ~7$/mois) pour la prod.
+# Alternative gratuite permanente : Neon.tech → copiez DATABASE_URL dans les variables Render.

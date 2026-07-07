@@ -892,7 +892,7 @@ function renderRichNote(text) {
   if (!text) return '<p style="opacity:0.5">No content yet. Switch to edit mode ✍️</p>';
 
   let html = '';
-  const imgPattern = /(?:https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp|svg)|blob:[^\s]+)/gi;
+  const imgPattern = /(?:data:image\/[^;\s]+;base64,[^\s]+|https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp|svg)|blob:[^\s]+)/gi;
   const ytPattern = /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/gi;
 
   // Images
@@ -1509,7 +1509,7 @@ function openBackupPage() {
       <button class="btn-icon" id="close-backup">❌</button>
     </div>
     <p style="opacity:0.7;font-size:14px;margin-bottom:16px">
-      ☁️ Vos notes sont sauvegardées automatiquement sur le serveur.
+      ☁️ Vos notes et photos sont sauvegardées automatiquement dans la base de données PostgreSQL.
     </p>
     <button class="btn btn-primary btn-block" id="btn-cloud-backup" style="margin-bottom:8px">📥 Télécharger ma sauvegarde</button>
     <button class="btn btn-secondary btn-block" id="btn-cloud-restore" style="margin-bottom:16px">📂 Restaurer une sauvegarde</button>
