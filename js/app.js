@@ -1588,39 +1588,28 @@ function openBackupPage() {
 async function loadFromServer() {
   try {
     const serverData = await Sync.fetchData();
+
+    // Le serveur est la source de vérité dès qu'il a été synchronisé au moins une fois
+    if (serverData.updated_at) {
+      applyData(serverData);
+      persistLocal(serverData.updated_at);
+      return;
+    }
+
+    // Premier démarrage : migrer les données locales vers le serveur si elles existent
     let localData = null;
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) localData = JSON.parse(raw);
     } catch { /* ignore */ }
 
-    const serverTime = serverData.updated_at ? Date.parse(serverData.updated_at) : 0;
-    const localTime = localData?._updatedAt ? Date.parse(localData._updatedAt) : 0;
+    const localHasData =
+      (localData?.positions?.length > 0) || (Object.keys(localData?.notes || {}).length > 0);
 
-    // Migration : anciennes données locales sans horodatage → pousser vers le serveur
-    if (localData && !localData._updatedAt) {
+    if (localHasData) {
       applyData(localData);
       await Sync.pushData(getSyncPayload());
       persistLocal(new Date().toISOString());
-      return;
-    }
-
-    // Les modifications locales récentes priment (y compris une carte vide)
-    if (localData?._updatedAt && localTime >= serverTime) {
-      applyData(localData);
-      await Sync.pushData(getSyncPayload());
-      return;
-    }
-
-    const serverHasData =
-      (serverData.positions?.length > 0) || (Object.keys(serverData.notes || {}).length > 0);
-
-    if (serverHasData) {
-      applyData(serverData);
-      persistLocal(serverData.updated_at || new Date().toISOString());
-    } else if (localData) {
-      applyData(localData);
-      await Sync.pushData(getSyncPayload());
     } else {
       initDefaultData();
     }
