@@ -33,7 +33,6 @@ const state = {
   searchQuery: '',
   apiKeys: { deepseek: '', openai: '' },
   noteDates: {},      // word (lowercase) -> ISO createdAt
-  allNotesWords: [],  // notes épinglées dans All Notes
 };
 
 // ─── DOM ─────────────────────────────────────────────────────────────────────
@@ -98,7 +97,6 @@ function getSyncPayload() {
       isDark: state.isDark,
       diaporamaList: state.diaporamaList,
       noteDates: state.noteDates,
-      allNotesWords: state.allNotesWords,
     },
   };
 }
@@ -124,7 +122,6 @@ function applyData(data) {
   state.isDark = s.isDark ?? state.isDark ?? true;
   state.diaporamaList = s.diaporamaList || state.diaporamaList || [];
   state.noteDates = s.noteDates || data.noteDates || {};
-  state.allNotesWords = s.allNotesWords || data.allNotesWords || [];
   state.apiKeys = { deepseek: '', openai: '' };
   Object.keys(state.notes).forEach((key) => {
     state.notes[key] = noteToPlain(state.notes[key]);
@@ -143,7 +140,6 @@ function buildLocalData(updatedAt) {
     isDark: state.isDark,
     diaporamaList: state.diaporamaList,
     noteDates: state.noteDates,
-    allNotesWords: state.allNotesWords,
     apiKeys: state.apiKeys,
     _updatedAt: updatedAt || new Date().toISOString(),
   };
@@ -178,29 +174,6 @@ function pruneOrphanNotes() {
   Object.keys(state.noteDates).forEach((key) => {
     if (!words.has(key)) delete state.noteDates[key];
   });
-  state.allNotesWords = state.allNotesWords.filter((w) =>
-    words.has(w.toLowerCase()),
-  );
-}
-
-function pinNoteForAllNotes(word) {
-  const canonical = getCanonicalWord(word);
-  const key = canonical.toLowerCase();
-  if (!state.allNotesWords.some((w) => w.toLowerCase() === key)) {
-    state.allNotesWords.push(canonical);
-    save();
-  }
-}
-
-function unpinNoteForAllNotes(word) {
-  const key = word.toLowerCase();
-  state.allNotesWords = state.allNotesWords.filter((w) => w.toLowerCase() !== key);
-}
-
-function renamePinnedNote(oldWord, newWord) {
-  const oldKey = oldWord.toLowerCase();
-  const idx = state.allNotesWords.findIndex((w) => w.toLowerCase() === oldKey);
-  if (idx !== -1) state.allNotesWords[idx] = newWord;
 }
 
 function ensureNoteDate(word) {
@@ -245,7 +218,6 @@ function removeNotesForWords(words) {
       delete state.notes[key];
       delete state.noteDates[key];
     }
-    unpinNoteForAllNotes(word);
   });
 }
 
@@ -1225,10 +1197,8 @@ function openAllNotesPage() {
   document.body.classList.remove('map-view');
 
   function getSorted() {
-    const pinned = new Set(state.allNotesWords.map((w) => w.toLowerCase()));
     return state.positions
       .map((p, i) => ({ ...p, index: i }))
-      .filter((p) => pinned.has(p.word.toLowerCase()))
       .filter((p) => p.word.toLowerCase().includes(allNotesUI.searchQ.toLowerCase()))
       .sort((a, b) => a.word.localeCompare(b.word));
   }
@@ -1245,11 +1215,12 @@ function openAllNotesPage() {
 
   function updateList() {
     const sorted = getSorted();
-    const query = allNotesUI.searchQ.trim().toLowerCase();
-    const alreadyPinned = state.allNotesWords.some((w) => w.toLowerCase() === query);
+    const exactMatch = sorted.some(
+      (p) => p.word.toLowerCase() === allNotesUI.searchQ.trim().toLowerCase(),
+    );
     const createBtn = $('#create-from-search');
 
-    if (query && !alreadyPinned) {
+    if (allNotesUI.searchQ.trim() && !exactMatch) {
       if (!createBtn) {
         const el = document.createElement('div');
         el.id = 'create-from-search';
@@ -1258,11 +1229,7 @@ function openAllNotesPage() {
         el.addEventListener('click', async () => {
           const word = allNotesUI.searchQ.trim();
           if (!word) return;
-          if (!wordExistsInMap(word)) {
-            addWord(word, -state.offsetX, -state.offsetY);
-          }
-          pinNoteForAllNotes(word);
-          save();
+          addWord(word, -state.offsetX, -state.offsetY);
           if (Sync.isServerMode()) {
             try {
               await Sync.pushData(getSyncPayload());
@@ -1288,13 +1255,11 @@ function openAllNotesPage() {
 
     const list = $('#all-notes-list');
     if (list) {
-      list.innerHTML = sorted.length
-        ? sorted.map((p) => `
+      list.innerHTML = sorted.map((p) => `
         <div class="list-item" data-index="${p.index}">
           <div style="font-weight:600">${escapeHtml(p.word)}</div>
         </div>
-      `).join('')
-        : '<p style="opacity:0.5;text-align:center;padding:24px">Aucune note. Créez-en une via la recherche ci-dessus.</p>';
+      `).join('');
       bindListItems();
     }
   }
@@ -1381,7 +1346,6 @@ function showNoteListActions(index) {
           });
           if (oldNote) { setNote(newName, oldNote); delete state.notes[pos.word.toLowerCase()]; }
           renameNoteDate(pos.word, newName);
-          renamePinnedNote(pos.word, newName);
           save();
         }
         hideModal();
