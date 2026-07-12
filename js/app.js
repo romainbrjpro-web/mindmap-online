@@ -63,13 +63,21 @@ function openNoteInNewTab(index, edit = false) {
 
 function openNoteFromUrl() {
   const params = new URLSearchParams(location.search);
-  const noteWord = params.get('note');
+  const noteWord = params.get('note')?.trim();
   if (!noteWord) return false;
 
-  const idx = state.positions.findIndex(
+  let idx = state.positions.findIndex(
     (p) => p.word.toLowerCase() === noteWord.toLowerCase(),
   );
-  if (idx === -1) return false;
+
+  // Note créée dans l'autre onglet — pas encore sur le serveur
+  if (idx === -1) {
+    addWord(noteWord, -state.offsetX, -state.offsetY);
+    idx = state.positions.findIndex(
+      (p) => p.word.toLowerCase() === noteWord.toLowerCase(),
+    );
+    if (idx === -1) return false;
+  }
 
   state.isReadingMode = params.get('edit') !== '1';
   document.body.classList.remove('home-view');
@@ -1177,9 +1185,25 @@ function openAllNotesPage() {
         el.id = 'create-from-search';
         el.className = 'list-item create';
         el.style.cssText = 'color:var(--accent);font-weight:600;text-align:center';
-        el.addEventListener('click', () => {
-          addWord(allNotesUI.searchQ, -state.offsetX, -state.offsetY);
-          openNote(state.positions.length - 1, { newTab: true, edit: true });
+        el.addEventListener('click', async () => {
+          const word = allNotesUI.searchQ.trim();
+          if (!word) return;
+          addWord(word, -state.offsetX, -state.offsetY);
+          if (Sync.isServerMode()) {
+            try {
+              await Sync.pushData(getSyncPayload());
+            } catch (e) {
+              console.error('Sync before new tab:', e);
+            }
+          }
+          const idx = state.positions.findIndex(
+            (p) => p.word.toLowerCase() === word.toLowerCase(),
+          );
+          if (idx !== -1) openNote(idx, { newTab: true, edit: true });
+          allNotesUI.searchQ = '';
+          const searchInput = $('#all-notes-search');
+          if (searchInput) searchInput.value = '';
+          updateList();
         });
         $('#all-notes-list').before(el);
       }
