@@ -48,6 +48,24 @@ const $$ = (sel) => document.querySelectorAll(sel);
 
 const STORAGE_KEY = 'mindmap_data';
 const DEFAULT_TITLE = 'MindMap & Notes Sync';
+const dirtyNoteKeys = new Set();
+
+function getProtectedNoteKeys() {
+  const keys = new Set(dirtyNoteKeys);
+  if (state.editingIndex !== -1) {
+    const word = state.positions[state.editingIndex]?.word;
+    if (word) keys.add(word.toLowerCase());
+  }
+  return keys;
+}
+
+function clearDirtyNoteKeys(keys) {
+  if (keys) {
+    Object.keys(keys).forEach((k) => dirtyNoteKeys.delete(k.toLowerCase()));
+  } else {
+    dirtyNoteKeys.clear();
+  }
+}
 
 function noteUrl(word, edit = false) {
   const url = new URL(location.href);
@@ -247,8 +265,12 @@ function applyMergedSettings(...settingsSources) {
   if (merged.isDark != null) state.isDark = merged.isDark;
 }
 
-function mergeRemoteState(localStored, serverData) {
-  state.notes = mergeNotesKeepLonger(localStored?.notes, serverData?.notes);
+function mergeRemoteState(localStored, serverData, protectedKeys = getProtectedNoteKeys()) {
+  state.notes = mergeNotesOnPull(
+    { ...(localStored?.notes || {}), ...state.notes },
+    serverData?.notes,
+    protectedKeys,
+  );
   state.positions = mergePositions(localStored?.positions, serverData?.positions);
   state.history = mergeHistory(localStored?.history, serverData?.history);
   applyMergedSettings(getSettingsFromStored(localStored), serverData?.settings || {});
@@ -411,7 +433,9 @@ function getNote(word) {
 }
 
 function setNote(word, content, options = {}) {
-  state.notes[word.toLowerCase()] = noteToPlain(content);
+  const key = word.toLowerCase();
+  state.notes[key] = noteToPlain(content);
+  dirtyNoteKeys.add(key);
   save(options);
 }
 
@@ -2767,7 +2791,12 @@ function handleRemoteUpdate(data) {
 
   if (state.editingIndex !== -1) {
     const localStored = getLocalStoredData();
-    state.notes = mergeNotesKeepLonger(localStored?.notes, data.notes);
+    const protectedKeys = getProtectedNoteKeys();
+    state.notes = mergeNotesOnPull(
+      { ...(localStored?.notes || {}), ...state.notes },
+      data.notes,
+      protectedKeys,
+    );
     state.positions = mergePositions(localStored?.positions, data.positions);
     applyMergedSettings(getSettingsFromStored(localStored), data.settings || {});
     persistLocal(new Date().toISOString());
@@ -2880,7 +2909,13 @@ async function bootstrap() {
   startApp();
 
   if (Sync.isServerMode()) {
-    Sync.initLifecycle(getSyncPayload, handleRemoteUpdate);
+    Sync.initLifecycle(getSyncPayload, handleRemoteUpdate, {
+      getProtectedNoteKeys,
+      onPushSuccess: (payload) => {
+        clearDirtyNoteKeys(payload?.notes);
+        if (payload) Sync.rememberServerData(payload);
+      },
+    });
     Sync.startPolling(handleRemoteUpdate);
     Sync.startPeriodicSave(getSyncPayload);
     syncInBackground();

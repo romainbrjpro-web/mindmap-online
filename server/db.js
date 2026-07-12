@@ -268,6 +268,21 @@ const stmts = {
     return merged;
   },
 
+  mergeNotesOnSave(existingNotes, incomingNotes) {
+    const existing = safeJsonParse(existingNotes, {});
+    const incoming = safeJsonParse(incomingNotes, {});
+    const merged = { ...existing };
+    Object.entries(incoming).forEach(([key, content]) => {
+      const prev = merged[key] || '';
+      if (content && content.length > 0) {
+        merged[key] = content;
+      } else if (!prev) {
+        merged[key] = content;
+      }
+    });
+    return merged;
+  },
+
   mergePositions(...sources) {
     const byKey = new Map();
     sources.forEach((positions) => {
@@ -397,7 +412,7 @@ const stmts = {
     return withDataLock(() => {
       const store = loadStore();
       const existing = store.mindmap_data[userId];
-      const mergedNotes = stmts.mergeNotesKeepLonger(existing?.notes, notes);
+      const mergedNotes = stmts.mergeNotesOnSave(existing?.notes, notes);
       const mergedPositions = stmts.mergePositions(existing?.positions, positions);
       const mergedHistory = stmts.mergeHistory(existing?.history, history);
       const mergedSettings = stmts.mergeSettings(existing?.settings, settings);

@@ -3,8 +3,8 @@
  */
 
 const SAVE_INTERVAL_MS = 15 * 60 * 1000;
-const POLL_INTERVAL_MS = 30000; // vérifie la version toutes les 30s (léger)
-const SYNC_DEBOUNCE_MS = 2500; // regroupe les sauvegardes rapides
+const POLL_INTERVAL_MS = 30000;
+const SYNC_DEBOUNCE_MS = 800;
 
 function parseSettings(settings) {
   if (!settings) return {};
@@ -14,15 +14,31 @@ function parseSettings(settings) {
   return settings;
 }
 
-function mergeNotesKeepLonger(...sources) {
-  const merged = {};
-  sources.forEach((notes) => {
-    Object.entries(notes || {}).forEach(([key, content]) => {
-      const existing = merged[key] || '';
-      if ((content?.length || 0) > (existing?.length || 0)) {
-        merged[key] = content;
-      }
-    });
+function mergeNotesKeepLonger(localNotes, incomingNotes) {
+  const merged = { ...(incomingNotes || {}) };
+  Object.entries(localNotes || {}).forEach(([key, content]) => {
+    const existing = merged[key] || '';
+    if ((content?.length || 0) > (existing?.length || 0)) {
+      merged[key] = content;
+    }
+  });
+  return merged;
+}
+
+/** À l'envoi : le contenu local l'emporte (c'est une sauvegarde volontaire). */
+function mergeNotesOnPush(serverNotes, localNotes) {
+  const merged = { ...(serverNotes || {}) };
+  Object.entries(localNotes || {}).forEach(([key, content]) => {
+    if (content != null) merged[key] = content;
+  });
+  return merged;
+}
+
+function mergeNotesOnPull(localNotes, serverNotes, protectedKeys = new Set()) {
+  const merged = mergeNotesKeepLonger(localNotes, serverNotes);
+  protectedKeys.forEach((key) => {
+    const k = key.toLowerCase();
+    if (localNotes?.[k] != null) merged[k] = localNotes[k];
   });
   return merged;
 }
@@ -125,12 +141,12 @@ function mergeSettings(...sources) {
   return merged;
 }
 
-function mergePayloadWithSnapshot(payload, snapshot) {
+function mergePayloadWithSnapshot(payload, snapshot, protectedNoteKeys = new Set()) {
   if (!snapshot) return payload;
   return {
     ...payload,
     positions: mergePositions(snapshot.positions, payload.positions),
-    notes: mergeNotesKeepLonger(snapshot.notes, payload.notes),
+    notes: mergeNotesOnPush(snapshot.notes, payload.notes),
     history: mergeHistory(snapshot.history, payload.history),
     settings: mergeSettings(snapshot.settings, payload.settings),
   };
@@ -146,6 +162,7 @@ const Sync = {
   periodicTimer: null,
   onRemoteUpdate: null,
   getPayload: null,
+  getProtectedNoteKeys: null,
 
   get headers() {
     return {
@@ -216,7 +233,10 @@ const Sync = {
     }
     let safePayload = payload;
     if (!options.skipMerge) {
-      safePayload = mergePayloadWithSnapshot(payload, this.lastServerSnapshot);
+      const protectedKeys = typeof this.getProtectedNoteKeys === 'function'
+        ? this.getProtectedNoteKeys()
+        : new Set();
+      safePayload = mergePayloadWithSnapshot(payload, this.lastServerSnapshot, protectedKeys);
     }
     this.lastPayload = safePayload;
     const res = await fetch('/api/data', {
@@ -227,6 +247,7 @@ const Sync = {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Erreur sauvegarde');
     if (data.updated_at) this.setServerTimestamp(data.updated_at);
+    if (typeof this.onPushSuccess === 'function') this.onPushSuccess(safePayload);
     return data;
   },
 
@@ -324,10 +345,12 @@ const Sync = {
     }, SAVE_INTERVAL_MS);
   },
 
-  initLifecycle(getPayload, onRemoteUpdate) {
+  initLifecycle(getPayload, onRemoteUpdate, options = {}) {
     if (!this.isServerMode()) return;
     this.getPayload = getPayload;
     this.onRemoteUpdate = onRemoteUpdate;
+    this.getProtectedNoteKeys = options.getProtectedNoteKeys || null;
+    this.onPushSuccess = options.onPushSuccess || null;
 
     window.addEventListener('pagehide', () => {
       if (getPayload) this.flushSync(getPayload);
@@ -361,6 +384,8 @@ const Sync = {
 if (typeof window !== 'undefined') {
   window.Sync = Sync;
   window.mergeNotesKeepLonger = mergeNotesKeepLonger;
+  window.mergeNotesOnPush = mergeNotesOnPush;
+  window.mergeNotesOnPull = mergeNotesOnPull;
   window.mergePositions = mergePositions;
   window.mergeFolders = mergeFolders;
   window.mergeNoteFolders = mergeNoteFolders;
