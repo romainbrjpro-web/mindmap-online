@@ -45,6 +45,37 @@ const $$ = (sel) => document.querySelectorAll(sel);
 // ─── Persistence ─────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = 'mindmap_data';
+const DEFAULT_TITLE = 'MindMap & Notes Sync';
+
+function noteUrl(word, edit = false) {
+  const url = new URL(location.href);
+  url.search = '';
+  url.searchParams.set('note', word);
+  if (edit) url.searchParams.set('edit', '1');
+  return url.toString();
+}
+
+function openNoteInNewTab(index, edit = false) {
+  const word = state.positions[index]?.word;
+  if (!word) return;
+  window.open(noteUrl(word, edit), '_blank', 'noopener');
+}
+
+function openNoteFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const noteWord = params.get('note');
+  if (!noteWord) return false;
+
+  const idx = state.positions.findIndex(
+    (p) => p.word.toLowerCase() === noteWord.toLowerCase(),
+  );
+  if (idx === -1) return false;
+
+  state.isReadingMode = params.get('edit') !== '1';
+  document.body.classList.remove('home-view');
+  openNote(idx);
+  return true;
+}
 
 function getSyncPayload() {
   return {
@@ -422,7 +453,7 @@ function handleTap(screenX, screenY) {
   const index = findWordAt(screenX, screenY);
   if (index !== -1) {
     if (state.selected.has(index)) {
-      openNote(index);
+      openNote(index, { newTab: true });
     } else {
       speak(state.positions[index].word);
       state.selected = new Set([index]);
@@ -893,13 +924,19 @@ $('#btn-backup').addEventListener('click', openBackupPage);
 
 // ─── Note View ───────────────────────────────────────────────────────────────
 
-function openNote(index) {
+function openNote(index, { newTab = false, edit = false } = {}) {
+  if (newTab) {
+    openNoteInNewTab(index, edit);
+    return;
+  }
+
   state.editingIndex = index;
-  state.isReadingMode = true;
+  if (edit) state.isReadingMode = false;
   const word = state.positions[index].word;
 
   addHistory(word);
   speak(word);
+  document.title = word;
   renderNoteView();
   $('#page-note').classList.remove('hidden');
 }
@@ -915,6 +952,7 @@ function renderNoteView() {
   const pos = state.positions[state.editingIndex];
   const note = getNote(pos.word);
   const page = $('#page-note');
+  document.title = pos.word;
 
   page.innerHTML = `
     <div class="note-view">
@@ -1016,13 +1054,13 @@ function navigateToWiki(targetWord) {
     state.offsetY = -pos.y;
     state.zoom = 1.5;
     state.selected = new Set([idx]);
-    openNote(idx);
+    openNote(idx, { newTab: true });
   } else {
     const current = state.positions[state.editingIndex];
     state.positions.push({ word: targetWord, x: current.x + 200, y: current.y + 200, level: 0 });
     ensureNoteDate(targetWord);
     save();
-    openNote(state.positions.length - 1);
+    openNote(state.positions.length - 1, { newTab: true });
   }
 }
 
@@ -1082,7 +1120,7 @@ function openHistoryPage() {
   page.querySelectorAll('.list-item').forEach(item => {
     item.addEventListener('click', () => {
       const idx = state.positions.findIndex(p => p.word === item.dataset.word);
-      if (idx !== -1) { page.classList.add('hidden'); openNote(idx); }
+      if (idx !== -1) { page.classList.add('hidden'); openNote(idx, { newTab: true }); }
     });
   });
 }
@@ -1120,7 +1158,7 @@ function openAllNotesPage() {
 
   function bindListItems() {
     page.querySelectorAll('.list-item[data-index]').forEach(item => {
-      item.addEventListener('click', () => openNote(+item.dataset.index));
+      item.addEventListener('click', () => openNote(+item.dataset.index, { newTab: true }));
       item.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         showNoteListActions(+item.dataset.index);
@@ -1141,8 +1179,7 @@ function openAllNotesPage() {
         el.style.cssText = 'color:var(--accent);font-weight:600;text-align:center';
         el.addEventListener('click', () => {
           addWord(allNotesUI.searchQ, -state.offsetX, -state.offsetY);
-          openNote(state.positions.length - 1);
-          state.isReadingMode = false;
+          openNote(state.positions.length - 1, { newTab: true, edit: true });
         });
         $('#all-notes-list').before(el);
       }
@@ -1578,6 +1615,10 @@ function closeNote() {
   state.editingIndex = -1;
   clearInterval(timerInterval);
   $('#page-note').classList.add('hidden');
+  document.title = DEFAULT_TITLE;
+  if (location.search.includes('note=')) {
+    history.replaceState(null, '', location.pathname);
+  }
   openAllNotesPage();
   render();
 }
@@ -1810,7 +1851,9 @@ async function bootstrap() {
     load();
   }
   startApp();
-  openAllNotesPage();
+  if (!openNoteFromUrl()) {
+    openAllNotesPage();
+  }
 }
 
 // ─── Init ──────────────────────────────────────────────────────────────────────
