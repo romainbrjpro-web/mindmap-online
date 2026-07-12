@@ -1602,9 +1602,7 @@ function renderNoteView() {
         </div>
         <button type="button" class="btn-icon" onclick="App.closeNote()">❌</button>
       </div>
-      <div class="note-mode-label">${state.isReadingMode ? 'Reading View' : 'Editing View'}</div>
       <div class="note-content ${state.isReadingMode ? 'reading' : ''}" id="note-body"></div>
-      <button type="button" class="btn btn-primary btn-block" onclick="App.closeNote()">Back to All Notes 📜</button>
     </div>
   `;
 
