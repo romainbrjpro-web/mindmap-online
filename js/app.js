@@ -246,18 +246,64 @@ function noteToPlain(text) {
   return text.replace(/\[\[([^\]]+)\]\]/g, '$1');
 }
 
+function isLinkBoundaryBefore(ch) {
+  return ch === undefined || /\s/.test(ch) || /[.,;:!?«»"'([{—\-…]/.test(ch);
+}
+
+function isLinkBoundaryAfter(ch) {
+  return ch === undefined || /\s/.test(ch) || /[.,;:!?»"')\]}—\-…]/.test(ch);
+}
+
 function linkifyPlainText(plain) {
-  return plain.split(/(\s+)/).map((token) => {
-    if (/^\s+$/.test(token)) {
-      return token.split('\n').join('<br>');
+  const words = getAllMindmapWords().sort((a, b) => b.length - a.length);
+  let html = '';
+  let i = 0;
+
+  while (i < plain.length) {
+    const ch = plain[i];
+
+    if (ch === '\n') {
+      html += '<br>';
+      i += 1;
+      continue;
     }
-    const m = token.match(/^([\p{L}\p{N}'’\-]+)(.*)$/u);
-    if (m && wordExistsInMap(m[1])) {
-      const canonical = getCanonicalWord(m[1]);
-      return `<span class="wikilink" data-word="${escapeHtml(canonical)}">${escapeHtml(canonical)}</span>${escapeHtml(m[2])}`;
+
+    if (/\s/.test(ch)) {
+      html += ch;
+      i += 1;
+      continue;
     }
-    return escapeHtml(token);
-  }).join('');
+
+    let linked = false;
+    for (const word of words) {
+      if (plain.length - i < word.length) continue;
+      if (plain.substring(i, i + word.length).toLowerCase() !== word.toLowerCase()) continue;
+
+      const before = i > 0 ? plain[i - 1] : undefined;
+      const after = plain[i + word.length];
+      if (!isLinkBoundaryBefore(before) || !isLinkBoundaryAfter(after)) continue;
+
+      const canonical = getCanonicalWord(word);
+      const slice = plain.substring(i, i + word.length);
+      html += `<span class="wikilink" data-word="${escapeHtml(canonical)}">${escapeHtml(slice)}</span>`;
+      i += word.length;
+      linked = true;
+      break;
+    }
+
+    if (!linked) {
+      const m = plain.slice(i).match(/^[\p{L}\p{N}'’\-]+/u);
+      if (m) {
+        html += escapeHtml(m[0]);
+        i += m[0].length;
+      } else {
+        html += escapeHtml(ch);
+        i += 1;
+      }
+    }
+  }
+
+  return html;
 }
 
 function initDefaultData() {
@@ -1015,14 +1061,23 @@ function renderNoteView() {
   const dateFooter = renderNoteDateFooter(pos.word);
   if (state.isReadingMode) {
     body.innerHTML = renderRichNote(note) + dateFooter;
-    body.querySelectorAll('.wikilink').forEach(el => {
-      el.addEventListener('click', () => navigateToWiki(el.dataset.word));
-    });
-    body.querySelectorAll('a[data-url]').forEach(el => {
-      el.addEventListener('click', (e) => { e.preventDefault(); window.open(el.dataset.url, '_blank'); });
-    });
-    body.querySelectorAll('.youtube-preview').forEach(el => {
-      el.addEventListener('click', () => window.open(el.dataset.url, '_blank'));
+    body.addEventListener('click', (e) => {
+      const link = e.target.closest('.wikilink');
+      if (link?.dataset.word) {
+        e.preventDefault();
+        navigateToWiki(link.dataset.word);
+        return;
+      }
+      const urlLink = e.target.closest('a[data-url]');
+      if (urlLink) {
+        e.preventDefault();
+        window.open(urlLink.dataset.url, '_blank');
+        return;
+      }
+      const yt = e.target.closest('.youtube-preview');
+      if (yt?.dataset.url) {
+        window.open(yt.dataset.url, '_blank');
+      }
     });
   } else {
     body.innerHTML = `
