@@ -491,14 +491,10 @@ html, body {
 }
 
 .note-content.reading a, .note-content.reading .wikilink {
-  color: var(--accent);
-  text-decoration: underline;
+  color: inherit;
+  font-weight: inherit;
+  text-decoration: none;
   cursor: pointer;
-}
-
-.note-content.reading .wikilink {
-  color: var(--cyan);
-  font-weight: 600;
 }
 
 .note-content.reading strong {

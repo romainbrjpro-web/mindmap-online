@@ -33,6 +33,7 @@ const state = {
   searchQuery: '',
   apiKeys: { deepseek: '', openai: '' },
   noteDates: {},      // word (lowercase) -> ISO createdAt
+  allNotesWords: [],  // notes épinglées dans All Notes
 };
 
 // ─── DOM ─────────────────────────────────────────────────────────────────────
@@ -97,6 +98,7 @@ function getSyncPayload() {
       isDark: state.isDark,
       diaporamaList: state.diaporamaList,
       noteDates: state.noteDates,
+      allNotesWords: state.allNotesWords,
     },
   };
 }
@@ -122,7 +124,11 @@ function applyData(data) {
   state.isDark = s.isDark ?? state.isDark ?? true;
   state.diaporamaList = s.diaporamaList || state.diaporamaList || [];
   state.noteDates = s.noteDates || data.noteDates || {};
+  state.allNotesWords = s.allNotesWords || data.allNotesWords || [];
   state.apiKeys = { deepseek: '', openai: '' };
+  Object.keys(state.notes).forEach((key) => {
+    state.notes[key] = noteToPlain(state.notes[key]);
+  });
   preserveLocalApiKeys();
 }
 
@@ -137,6 +143,7 @@ function buildLocalData(updatedAt) {
     isDark: state.isDark,
     diaporamaList: state.diaporamaList,
     noteDates: state.noteDates,
+    allNotesWords: state.allNotesWords,
     apiKeys: state.apiKeys,
     _updatedAt: updatedAt || new Date().toISOString(),
   };
@@ -171,6 +178,29 @@ function pruneOrphanNotes() {
   Object.keys(state.noteDates).forEach((key) => {
     if (!words.has(key)) delete state.noteDates[key];
   });
+  state.allNotesWords = state.allNotesWords.filter((w) =>
+    words.has(w.toLowerCase()),
+  );
+}
+
+function pinNoteForAllNotes(word) {
+  const canonical = getCanonicalWord(word);
+  const key = canonical.toLowerCase();
+  if (!state.allNotesWords.some((w) => w.toLowerCase() === key)) {
+    state.allNotesWords.push(canonical);
+    save();
+  }
+}
+
+function unpinNoteForAllNotes(word) {
+  const key = word.toLowerCase();
+  state.allNotesWords = state.allNotesWords.filter((w) => w.toLowerCase() !== key);
+}
+
+function renamePinnedNote(oldWord, newWord) {
+  const oldKey = oldWord.toLowerCase();
+  const idx = state.allNotesWords.findIndex((w) => w.toLowerCase() === oldKey);
+  if (idx !== -1) state.allNotesWords[idx] = newWord;
 }
 
 function ensureNoteDate(word) {
@@ -215,6 +245,7 @@ function removeNotesForWords(words) {
       delete state.notes[key];
       delete state.noteDates[key];
     }
+    unpinNoteForAllNotes(word);
   });
 }
 
@@ -230,12 +261,31 @@ function load() {
 }
 
 function getNote(word) {
-  return state.notes[word.toLowerCase()] || '';
+  return noteToPlain(state.notes[word.toLowerCase()] || '');
 }
 
 function setNote(word, content) {
-  state.notes[word.toLowerCase()] = content;
+  state.notes[word.toLowerCase()] = noteToPlain(content);
   save();
+}
+
+function noteToPlain(text) {
+  if (!text) return '';
+  return text.replace(/\[\[([^\]]+)\]\]/g, '$1');
+}
+
+function linkifyPlainText(plain) {
+  return plain.split(/(\s+)/).map((token) => {
+    if (/^\s+$/.test(token)) {
+      return token.split('\n').join('<br>');
+    }
+    const m = token.match(/^([\p{L}\p{N}'’\-]+)(.*)$/u);
+    if (m && wordExistsInMap(m[1])) {
+      const canonical = getCanonicalWord(m[1]);
+      return `<span class="wikilink" data-word="${escapeHtml(canonical)}">${escapeHtml(canonical)}</span>${escapeHtml(m[2])}`;
+    }
+    return escapeHtml(token);
+  }).join('');
 }
 
 function initDefaultData() {
@@ -975,7 +1025,6 @@ function renderNoteView() {
             <button onclick="App.speakTitle()" title="TTS Title">📢</button>
             <button onclick="App.speakNote()" title="TTS Note">📝🔊</button>
             <button onclick="App.pickImage()" title="Photo">📷</button>
-            <button onclick="App.insertWikilink()" title="Wikilink">[[]]</button>
             <button onclick="App.toggleMode()" title="Mode">${state.isReadingMode ? '✍️' : '📖'}</button>
             <button onclick="App.generateAI()" title="AI" id="btn-ai">${state.isAiGenerating ? '<span class="spinner"></span>' : '✨'}</button>
             <div class="timer" id="note-timer" onclick="App.toggleTimer()">⏱️ <span id="timer-text">00:00</span></div>
@@ -1033,6 +1082,19 @@ function renderNoteView() {
   if (state.isDiaporamaRunning) startDiaporamaProgress();
 }
 
+function formatPlainNoteText(plain) {
+  const parts = plain.split(/(\*\*[^*]+\*\*|https?:\/\/[^\s<]+)/g);
+  return parts.map((part) => {
+    if (!part) return '';
+    const boldMatch = part.match(/^\*\*([^*]+)\*\*$/);
+    if (boldMatch) return `<strong>${linkifyPlainText(boldMatch[1])}</strong>`;
+    if (/^https?:\/\//.test(part)) {
+      return `<a href="#" data-url="${escapeHtml(part)}">${escapeHtml(part)}</a>`;
+    }
+    return linkifyPlainText(part);
+  }).join('');
+}
+
 function renderRichNote(text) {
   if (!text) return '<p style="opacity:0.5;text-align:center">No content yet. Switch to edit mode ✍️</p>';
 
@@ -1040,16 +1102,13 @@ function renderRichNote(text) {
   const imgPattern = /(?:data:image\/[^;\s]+;base64,[^\s]+|https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp|svg)|blob:[^\s]+)/gi;
   const ytPattern = /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/gi;
 
-  // Images
-  let match;
-  const imgs = [...text.matchAll(imgPattern)];
-  imgs.forEach(m => {
+  const plain = noteToPlain(text);
+
+  [...plain.matchAll(imgPattern)].forEach((m) => {
     html += `<img src="${m[0]}" alt="Note image" loading="lazy">`;
   });
 
-  // YouTube
-  const yts = [...text.matchAll(ytPattern)];
-  yts.forEach(m => {
+  [...plain.matchAll(ytPattern)].forEach((m) => {
     const id = m[1];
     html += `<div class="youtube-preview" data-url="${m[0]}">
       <img src="https://img.youtube.com/vi/${id}/hqdefault.jpg" alt="YouTube">
@@ -1057,19 +1116,8 @@ function renderRichNote(text) {
     </div>`;
   });
 
-  // Text (remove image URLs)
-  let textOnly = text.replace(imgPattern, '').trim();
-  textOnly = escapeHtml(textOnly);
-
-  const combined = /(\*\*([^*]+)\*\*)|(\[\[([^\]]+)\]\])|(https?:\/\/[^\s<]+)/g;
-  textOnly = textOnly.replace(combined, (full, _b, bold, _w, wiki, url) => {
-    if (bold) return `<strong>${bold}</strong>`;
-    if (wiki) return `<span class="wikilink" data-word="${escapeHtml(wiki)}">${escapeHtml(wiki)}</span>`;
-    if (url) return `<a href="#" data-url="${url}">${url}</a>`;
-    return full;
-  });
-
-  html += `<div>${textOnly.replace(/\n/g, '<br>')}</div>`;
+  const textOnly = plain.replace(imgPattern, '').trim();
+  html += `<div>${formatPlainNoteText(textOnly)}</div>`;
   return html;
 }
 
@@ -1177,9 +1225,11 @@ function openAllNotesPage() {
   document.body.classList.remove('map-view');
 
   function getSorted() {
+    const pinned = new Set(state.allNotesWords.map((w) => w.toLowerCase()));
     return state.positions
       .map((p, i) => ({ ...p, index: i }))
-      .filter(p => p.word.toLowerCase().includes(allNotesUI.searchQ.toLowerCase()))
+      .filter((p) => pinned.has(p.word.toLowerCase()))
+      .filter((p) => p.word.toLowerCase().includes(allNotesUI.searchQ.toLowerCase()))
       .sort((a, b) => a.word.localeCompare(b.word));
   }
 
@@ -1195,10 +1245,11 @@ function openAllNotesPage() {
 
   function updateList() {
     const sorted = getSorted();
-    const exactMatch = sorted.some(p => p.word.toLowerCase() === allNotesUI.searchQ.toLowerCase());
+    const query = allNotesUI.searchQ.trim().toLowerCase();
+    const alreadyPinned = state.allNotesWords.some((w) => w.toLowerCase() === query);
     const createBtn = $('#create-from-search');
 
-    if (allNotesUI.searchQ && !exactMatch) {
+    if (query && !alreadyPinned) {
       if (!createBtn) {
         const el = document.createElement('div');
         el.id = 'create-from-search';
@@ -1207,7 +1258,11 @@ function openAllNotesPage() {
         el.addEventListener('click', async () => {
           const word = allNotesUI.searchQ.trim();
           if (!word) return;
-          addWord(word, -state.offsetX, -state.offsetY);
+          if (!wordExistsInMap(word)) {
+            addWord(word, -state.offsetX, -state.offsetY);
+          }
+          pinNoteForAllNotes(word);
+          save();
           if (Sync.isServerMode()) {
             try {
               await Sync.pushData(getSyncPayload());
@@ -1233,11 +1288,13 @@ function openAllNotesPage() {
 
     const list = $('#all-notes-list');
     if (list) {
-      list.innerHTML = sorted.map(p => `
+      list.innerHTML = sorted.length
+        ? sorted.map((p) => `
         <div class="list-item" data-index="${p.index}">
           <div style="font-weight:600">${escapeHtml(p.word)}</div>
         </div>
-      `).join('');
+      `).join('')
+        : '<p style="opacity:0.5;text-align:center;padding:24px">Aucune note. Créez-en une via la recherche ci-dessus.</p>';
       bindListItems();
     }
   }
@@ -1324,6 +1381,7 @@ function showNoteListActions(index) {
           });
           if (oldNote) { setNote(newName, oldNote); delete state.notes[pos.word.toLowerCase()]; }
           renameNoteDate(pos.word, newName);
+          renamePinnedNote(pos.word, newName);
           save();
         }
         hideModal();
@@ -1709,10 +1767,6 @@ function getCanonicalWord(word) {
   return found ? found.word : word;
 }
 
-function isWordAlreadyWikilinked(text, start, end) {
-  return text.substring(start - 2, start) === '[[' && text.substring(end, end + 2) === ']]';
-}
-
 function handleSpaceAutoLink(editor, e) {
   const cursor = editor.selectionStart;
   const text = editor.value;
@@ -1720,8 +1774,6 @@ function handleSpaceAutoLink(editor, e) {
   if (!info || info.word.length < 1) return false;
   if (!/[a-zA-ZÀ-ÿ]/.test(info.word)) return false;
   if (/^https?:\/\//i.test(info.word)) return false;
-  if (/\[\[[^\]]*$/.test(text.substring(0, cursor))) return false;
-  if (isWordAlreadyWikilinked(text, info.start, info.end)) return false;
 
   const canonical = getCanonicalWord(info.word);
 
@@ -1735,7 +1787,7 @@ function handleSpaceAutoLink(editor, e) {
   }
 
   e.preventDefault();
-  const replacement = `[[${canonical}]] `;
+  const replacement = `${canonical} `;
   const newText = text.substring(0, info.start) + replacement + text.substring(info.end);
   editor.value = newText;
   editor.selectionStart = editor.selectionEnd = info.start + replacement.length;
@@ -1747,18 +1799,6 @@ function handleSpaceAutoLink(editor, e) {
 }
 
 function getWikiAutocompleteContext(text, cursor) {
-  const before = text.substring(0, cursor);
-
-  const bracketMatch = before.match(/\[\[([^\]]*)$/);
-  if (bracketMatch) {
-    return {
-      mode: 'bracket',
-      query: bracketMatch[1],
-      replaceStart: before.length - bracketMatch[0].length,
-      replaceEnd: cursor,
-    };
-  }
-
   const wordInfo = getWordBeforeCursor(text, cursor);
   if (wordInfo && wordInfo.word.length >= 1) {
     return {
@@ -1836,7 +1876,7 @@ function applyWikiSuggestion(editor, word) {
   if (!ctx || !word) return;
 
   const text = editor.value;
-  const replacement = `[[${word}]]`;
+  const replacement = word;
   const newText = text.substring(0, ctx.replaceStart) + replacement + text.substring(ctx.replaceEnd);
   const newCursor = ctx.replaceStart + replacement.length;
 
@@ -1877,21 +1917,10 @@ function handleWikiSuggestionKeys(e, editor) {
 }
 
 function insertWikilink() {
-  state.isReadingMode = false;
-  renderNoteView();
   const editor = $('#note-editor');
   if (!editor) return;
-  const start = editor.selectionStart;
-  const end = editor.selectionEnd;
-  const text = editor.value;
-  const selected = text.substring(start, end);
-  const insert = selected ? `[[${selected}]]` : '[[]]';
-  editor.value = text.substring(0, start) + insert + text.substring(end);
-  const word = state.positions[state.editingIndex].word;
-  setNote(word, editor.value);
-  editor.focus();
-  editor.selectionStart = editor.selectionEnd = start + (selected ? selected.length + 4 : 2);
   updateWikiSuggestions(editor);
+  editor.focus();
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
