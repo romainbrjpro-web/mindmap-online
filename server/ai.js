@@ -1,14 +1,13 @@
 const TEXT_PROMPT = (term) => `
-Rédige une note TRÈS courte et simple sur : ${term}
+Rédige une note ULTRA courte sur : ${term}
 
 Contraintes strictes :
-- 5 lignes maximum au total.
-- Commence par UNE phrase simple qui définit le sujet.
-- Puis 2 à 4 puces très courtes (l'essentiel uniquement).
-- Langage simple et clair, phrases courtes, mots courants.
-- Aucun titre, aucune section, aucun texte en gras, aucune conclusion.
-- Va droit à l'essentiel, aucune information superflue.
-- Ne répète pas le titre.
+- 4 lignes maximum au total.
+- Commence par UNE phrase courte qui définit le sujet (max 12 mots).
+- Puis 2 à 3 puces très courtes (max 8 mots chacune), l'essentiel absolu.
+- Mots simples et courants, aucune phrase complexe.
+- Aucun titre, aucune section, aucun gras, aucune introduction, aucune conclusion.
+- Ne répète pas le titre. Aucune information superflue.
 - Écris en français.
 `;
 
@@ -56,7 +55,7 @@ async function generateText(deepseekKey, word) {
   const data = await apiFetch('https://api.deepseek.com/chat/completions', deepseekKey, {
     model: 'deepseek-chat',
     messages: [{ role: 'user', content: TEXT_PROMPT(word) }],
-    max_tokens: 400,
+    max_tokens: 200,
   });
   return data.choices?.[0]?.message?.content || null;
 }

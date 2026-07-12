@@ -497,6 +497,35 @@ html, body {
   justify-content: center;
 }
 
+/* Floating toolbar pinned to the bottom of the note page */
+.note-toolbar-floating {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: max(12px, env(safe-area-inset-bottom));
+  z-index: 120;
+  margin-bottom: 0;
+  flex-wrap: nowrap;
+  max-width: calc(100% - 24px);
+  overflow-x: auto;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 16px;
+  background: rgba(30, 30, 40, 0.82);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  scrollbar-width: none;
+}
+
+.note-toolbar-floating::-webkit-scrollbar { display: none; }
+
+.note-toolbar-floating button,
+.note-toolbar-floating .timer {
+  flex: 0 0 auto;
+}
+
 .note-toolbar button {
   width: 36px;
   height: 36px;
@@ -525,6 +554,7 @@ html, body {
   flex: 1;
   overflow-y: auto;
   margin-bottom: 16px;
+  padding-bottom: 72px;
 }
 
 .note-content.reading {

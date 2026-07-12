@@ -1587,22 +1587,22 @@ function renderNoteView() {
       <div class="page-header">
         <div style="flex:1">
           <div class="note-title">${escapeHtml(pos.word)}</div>
-          <div class="note-toolbar">
-            <button onclick="App.googleSearch()" title="Google">🔍</button>
-            <button onclick="App.googleImages()" title="Images">🖼️</button>
-            <button onclick="App.googleMaps()" title="Maps">📍</button>
-            <button onclick="App.speakTitle()" title="TTS Title">📢</button>
-            <button onclick="App.speakNote()" title="TTS Note">📝🔊</button>
-            <button onclick="App.pickImage()" title="Photo">📷</button>
-            <button onclick="App.toggleMode()" title="Mode">${state.isReadingMode ? '✍️' : '📖'}</button>
-            <button onclick="App.generateAI()" title="AI" id="btn-ai">${state.isAiGenerating ? '<span class="spinner"></span>' : '✨'}</button>
-            <div class="timer" id="note-timer" onclick="App.toggleTimer()">⏱️ <span id="timer-text">00:00</span></div>
-            <button onclick="App.resetTimer()" id="btn-reset-timer" style="display:none">🔄</button>
-          </div>
         </div>
         <button type="button" class="btn-icon" onclick="App.closeNote()">❌</button>
       </div>
       <div class="note-content ${state.isReadingMode ? 'reading' : ''}" id="note-body"></div>
+      <div class="note-toolbar note-toolbar-floating">
+        <button onclick="App.googleSearch()" title="Google">🔍</button>
+        <button onclick="App.googleImages()" title="Images">🖼️</button>
+        <button onclick="App.googleMaps()" title="Maps">📍</button>
+        <button onclick="App.speakTitle()" title="TTS Title">📢</button>
+        <button onclick="App.speakNote()" title="TTS Note">📝🔊</button>
+        <button onclick="App.pickImage()" title="Photo">📷</button>
+        <button onclick="App.toggleMode()" title="Mode">${state.isReadingMode ? '✍️' : '📖'}</button>
+        <button onclick="App.generateAI()" title="AI" id="btn-ai">${state.isAiGenerating ? '<span class="spinner"></span>' : '✨'}</button>
+        <div class="timer" id="note-timer" onclick="App.toggleTimer()">⏱️ <span id="timer-text">00:00</span></div>
+        <button onclick="App.resetTimer()" id="btn-reset-timer" style="display:none">🔄</button>
+      </div>
     </div>
   `;
 
