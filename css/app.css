@@ -324,6 +324,45 @@ html, body {
   font-weight: 700;
 }
 
+.page-header-centered {
+  display: grid;
+  grid-template-columns: 40px 1fr 40px;
+  align-items: center;
+  text-align: center;
+}
+
+.page-header-centered h1 {
+  grid-column: 2;
+}
+
+.page-header-centered .header-side {
+  width: 40px;
+}
+
+.all-notes-search {
+  width: 100%;
+  padding: 12px;
+  border-radius: 12px;
+  border: none;
+  background: var(--surface);
+  color: var(--text);
+  margin-bottom: 16px;
+  font-size: 16px;
+  text-align: center;
+}
+
+.all-notes-search::placeholder {
+  text-align: center;
+}
+
+.all-notes-layout .list-item {
+  text-align: center;
+}
+
+.all-notes-layout .auto-scroll-bar {
+  justify-content: center;
+}
+
 .page-list {
   display: flex;
   flex-direction: column;
@@ -360,6 +399,7 @@ html, body {
   display: flex;
   flex-direction: column;
   height: 100%;
+  position: relative;
 }
 
 .note-title {
@@ -367,6 +407,7 @@ html, body {
   font-weight: 700;
   color: var(--accent);
   margin-bottom: 8px;
+  text-align: center;
 }
 
 .note-toolbar {
@@ -374,6 +415,7 @@ html, body {
   flex-wrap: wrap;
   gap: 4px;
   margin-bottom: 16px;
+  justify-content: center;
 }
 
 .note-toolbar button {
@@ -409,23 +451,25 @@ html, body {
 .note-content.reading {
   font-size: 16px;
   line-height: 1.6;
+  text-align: center;
 }
 
 .note-content.reading img {
   max-width: 100%;
   max-height: 400px;
   border-radius: 12px;
-  margin-bottom: 16px;
+  margin: 0 auto 16px;
   display: block;
 }
 
 .note-content.reading .youtube-preview {
   position: relative;
   width: 100%;
+  max-width: 480px;
   height: 200px;
   border-radius: 12px;
   overflow: hidden;
-  margin-bottom: 16px;
+  margin: 0 auto 16px;
   cursor: pointer;
 }
 
@@ -474,12 +518,39 @@ html, body {
   resize: none;
   outline: none;
   font-family: inherit;
+  text-align: center;
 }
 
 .note-mode-label {
   font-size: 13px;
   opacity: 0.6;
   margin-bottom: 8px;
+  text-align: center;
+}
+
+.note-view .page-header {
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.note-view .page-header > div:first-child {
+  width: 100%;
+}
+
+.note-view .page-header .btn-icon {
+  position: absolute;
+  top: max(16px, env(safe-area-inset-top));
+  right: 16px;
+}
+
+/* Home view — All Notes as landing page */
+body.home-view #mindmap-canvas,
+body.home-view .search-bar,
+body.home-view .zoom-indicator,
+body.home-view .help-text {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 /* Diaporama */

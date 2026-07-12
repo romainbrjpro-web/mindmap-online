@@ -832,7 +832,13 @@ $('#btn-theme').addEventListener('click', () => {
 
 $('#btn-history').addEventListener('click', openHistoryPage);
 $('#btn-diaporama').addEventListener('click', openDiaporamaPage);
-$('#btn-all-notes').addEventListener('click', openAllNotesPage);
+$('#btn-all-notes').addEventListener('click', () => {
+  if (document.body.classList.contains('home-view')) {
+    showMapView();
+  } else {
+    openAllNotesPage();
+  }
+});
 $('#btn-export').addEventListener('click', exportData);
 $('#btn-settings').addEventListener('click', openSettingsPage);
 $('#btn-backup').addEventListener('click', openBackupPage);
@@ -886,7 +892,7 @@ function renderNoteView() {
       </div>
       <div class="note-mode-label">${state.isReadingMode ? 'Reading View' : 'Editing View'}</div>
       <div class="note-content ${state.isReadingMode ? 'reading' : ''}" id="note-body"></div>
-      <button class="btn btn-primary btn-block" onclick="App.closeNote()">Back to Map 🗺️</button>
+      <button class="btn btn-primary btn-block" onclick="App.closeNote()">Back to All Notes 📜</button>
     </div>
   `;
 
@@ -914,7 +920,7 @@ function renderNoteView() {
 }
 
 function renderRichNote(text) {
-  if (!text) return '<p style="opacity:0.5">No content yet. Switch to edit mode ✍️</p>';
+  if (!text) return '<p style="opacity:0.5;text-align:center">No content yet. Switch to edit mode ✍️</p>';
 
   let html = '';
   const imgPattern = /(?:data:image\/[^;\s]+;base64,[^\s]+|https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp|svg)|blob:[^\s]+)/gi;
@@ -1031,14 +1037,25 @@ function openHistoryPage() {
   });
 }
 
-// ─── All Notes Page ──────────────────────────────────────────────────────────
+// ─── All Notes Page (home) ───────────────────────────────────────────────────
+
+function showMapView() {
+  cancelAnimationFrame(allNotesScrollRAF);
+  $('#page-all-notes').classList.add('hidden');
+  document.body.classList.remove('home-view');
+  document.body.classList.add('map-view');
+  render();
+}
+
+let allNotesScrollRAF = null;
 
 function openAllNotesPage() {
   const page = $('#page-all-notes');
+  document.body.classList.add('home-view');
+  document.body.classList.remove('map-view');
   let searchQ = '';
   let autoScroll = false;
   let scrollSpeed = 1;
-  let scrollRAF = null;
 
   function render() {
     const sorted = state.positions
@@ -1049,36 +1066,36 @@ function openAllNotesPage() {
     const exactMatch = sorted.some(p => p.word.toLowerCase() === searchQ.toLowerCase());
 
     page.innerHTML = `
-      <div class="page-header">
-        <h1>All Notes</h1>
-        <button class="btn-icon" id="close-all-notes">❌</button>
-      </div>
-      <input type="text" id="all-notes-search" placeholder="Search in all notes..." value="${escapeHtml(searchQ)}" style="width:100%;padding:12px;border-radius:12px;border:none;background:var(--surface);color:var(--text);margin-bottom:16px;font-size:16px">
-      ${searchQ && !exactMatch ? `
-        <div class="list-item create" id="create-from-search" style="color:var(--accent);font-weight:600;text-align:center">
-          ✨ Create "${escapeHtml(searchQ)}"
+      <div class="all-notes-layout">
+        <div class="page-header page-header-centered">
+          <button class="btn-icon header-side" id="btn-show-map" title="Mind Map">🗺️</button>
+          <h1>All Notes</h1>
+          <div class="header-side"></div>
         </div>
-      ` : ''}
-      <div class="page-list" id="all-notes-list" style="max-height:calc(100vh - 280px);overflow-y:auto">
-        ${sorted.map(p => `
-          <div class="list-item" data-index="${p.index}">
-            <div style="text-align:center;font-weight:600">${escapeHtml(p.word)}</div>
+        <input type="text" id="all-notes-search" class="all-notes-search" placeholder="Search in all notes..." value="${escapeHtml(searchQ)}">
+        ${searchQ && !exactMatch ? `
+          <div class="list-item create" id="create-from-search" style="color:var(--accent);font-weight:600;text-align:center">
+            ✨ Create "${escapeHtml(searchQ)}"
           </div>
-        `).join('')}
-      </div>
-      <div class="auto-scroll-bar">
-        <button class="btn-icon" id="auto-scroll-toggle">${autoScroll ? '⏸️' : '▶️'}</button>
-        <span>Auto-Scroll</span>
-        <input type="range" id="scroll-speed" min="0.5" max="30" step="0.5" value="${scrollSpeed}">
-        <span id="speed-label">${scrollSpeed}x</span>
+        ` : ''}
+        <div class="page-list" id="all-notes-list" style="max-height:calc(100vh - 280px);overflow-y:auto">
+          ${sorted.map(p => `
+            <div class="list-item" data-index="${p.index}">
+              <div style="font-weight:600">${escapeHtml(p.word)}</div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="auto-scroll-bar">
+          <button class="btn-icon" id="auto-scroll-toggle">${autoScroll ? '⏸️' : '▶️'}</button>
+          <span>Auto-Scroll</span>
+          <input type="range" id="scroll-speed" min="0.5" max="30" step="0.5" value="${scrollSpeed}">
+          <span id="speed-label">${scrollSpeed}x</span>
+        </div>
       </div>
     `;
 
     $('#all-notes-search').addEventListener('input', (e) => { searchQ = e.target.value; render(); });
-    $('#close-all-notes').addEventListener('click', () => {
-      cancelAnimationFrame(scrollRAF);
-      page.classList.add('hidden');
-    });
+    $('#btn-show-map').addEventListener('click', showMapView);
     $('#create-from-search')?.addEventListener('click', () => {
       addWord(searchQ, -state.offsetX, -state.offsetY);
       openNote(state.positions.length - 1);
@@ -1094,7 +1111,7 @@ function openAllNotesPage() {
     $('#auto-scroll-toggle').addEventListener('click', () => {
       autoScroll = !autoScroll;
       if (autoScroll) doAutoScroll();
-      else cancelAnimationFrame(scrollRAF);
+      else cancelAnimationFrame(allNotesScrollRAF);
       render();
     });
     $('#scroll-speed').addEventListener('input', (e) => {
@@ -1107,7 +1124,7 @@ function openAllNotesPage() {
     const list = $('#all-notes-list');
     if (list && autoScroll) {
       list.scrollTop += scrollSpeed;
-      scrollRAF = requestAnimationFrame(doAutoScroll);
+      allNotesScrollRAF = requestAnimationFrame(doAutoScroll);
     }
   }
 
@@ -1470,6 +1487,7 @@ function closeNote() {
   state.editingIndex = -1;
   clearInterval(timerInterval);
   $('#page-note').classList.add('hidden');
+  openAllNotesPage();
   render();
 }
 
@@ -1693,11 +1711,15 @@ async function bootstrap() {
       applyData(data);
       persistLocal(data.updated_at);
       render();
+      if (document.body.classList.contains('home-view')) {
+        openAllNotesPage();
+      }
     });
   } else {
     load();
   }
   startApp();
+  openAllNotesPage();
 }
 
 // ─── Init ──────────────────────────────────────────────────────────────────────
