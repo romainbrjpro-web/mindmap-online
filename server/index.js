@@ -4,7 +4,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
-const { init, stmts, getStorageInfo, getDataVersion, saveImageDataUri, dataDir, imagesDir, DEFAULT_USER_ID, listBackupSnapshots, restoreFromBackup } = require('./db');
+const { init, stmts, getStorageInfo, getDataVersion, saveImageDataUri, readImageDataUri, writeImageFromDataUri, dataDir, imagesDir, DEFAULT_USER_ID, listBackupSnapshots, restoreFromBackup } = require('./db');
 
 function safeJsonParse(value, fallback) {
   if (value == null || value === '') return fallback;
@@ -157,6 +157,52 @@ app.get('/api/data/backup', (req, res) => {
   if (!data) return res.status(404).json({ error: 'Aucune donnée' });
   res.setHeader('Content-Disposition', `attachment; filename="mindmap-backup-${Date.now()}.json"`);
   res.json(data);
+});
+
+// Sauvegarde complète : textes + images intégrées (auto-suffisante, hors-site)
+app.get('/api/data/full-backup', (req, res) => {
+  try {
+    const data = stmts.exportUserData(DEFAULT_USER_ID);
+    if (!data) return res.status(404).json({ error: 'Aucune donnée' });
+
+    const scan = JSON.stringify(data.notes || {}) + JSON.stringify(data.settings || {});
+    const refs = [...new Set(scan.match(/\/images\/[A-Za-z0-9._-]+/g) || [])];
+    const images = {};
+    refs.forEach((url) => {
+      const uri = readImageDataUri(url);
+      if (uri) images[url] = uri;
+    });
+
+    res.setHeader('Content-Disposition', `attachment; filename="mindmap-full-backup-${Date.now()}.json"`);
+    res.json({ version: 2, ...data, images });
+  } catch (e) {
+    console.error('GET /api/data/full-backup:', e);
+    res.status(500).json({ error: 'Erreur sauvegarde complète' });
+  }
+});
+
+app.post('/api/data/full-restore', async (req, res) => {
+  try {
+    const { positions, notes, history, settings, images } = req.body;
+    if (!Array.isArray(positions)) {
+      return res.status(400).json({ error: 'Fichier de sauvegarde invalide' });
+    }
+    let restoredImages = 0;
+    if (images && typeof images === 'object') {
+      for (const [url, dataUri] of Object.entries(images)) {
+        try {
+          if (writeImageFromDataUri(url, dataUri)) restoredImages += 1;
+        } catch (imgErr) {
+          console.error('Restore image échouée:', url, imgErr.message);
+        }
+      }
+    }
+    const row = await stmts.importUserData(DEFAULT_USER_ID, { positions, notes, history, settings });
+    res.json({ ok: true, restoredImages, updated_at: row.updated_at });
+  } catch (e) {
+    console.error('POST /api/data/full-restore:', e);
+    res.status(500).json({ error: e.message || 'Erreur restauration' });
+  }
 });
 
 app.post('/api/data/restore', async (req, res) => {

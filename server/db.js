@@ -36,6 +36,26 @@ function saveImageDataUri(dataUri) {
   return `/images/${filename}`;
 }
 
+function imageFilePath(urlPath) {
+  return path.join(imagesDir, path.basename(urlPath));
+}
+
+function readImageDataUri(urlPath) {
+  const filePath = imageFilePath(urlPath);
+  if (!fs.existsSync(filePath)) return null;
+  const buffer = fs.readFileSync(filePath);
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  const mime = Object.keys(MIME_EXT).find((m) => MIME_EXT[m] === ext) || 'image/png';
+  return `data:${mime};base64,${buffer.toString('base64')}`;
+}
+
+function writeImageFromDataUri(urlPath, dataUri) {
+  const match = /^data:([^;]+);base64,(.+)$/s.exec(dataUri || '');
+  if (!match) return false;
+  fs.writeFileSync(imageFilePath(urlPath), Buffer.from(match[2], 'base64'));
+  return true;
+}
+
 let lastBackupAt = 0;
 let dataLock = Promise.resolve();
 let storeCache = null;
@@ -485,6 +505,8 @@ module.exports = {
   getStorageInfo,
   getDataVersion,
   saveImageDataUri,
+  readImageDataUri,
+  writeImageFromDataUri,
   dataDir,
   imagesDir,
   DEFAULT_USER_ID,

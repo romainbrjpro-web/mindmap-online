@@ -2718,8 +2718,9 @@ function openBackupPage() {
         <button class="btn-icon" id="close-backup">❌</button>
       </div>
       <p style="opacity:0.7;font-size:14px;margin-bottom:16px">${storageWarning}</p>
-      <button class="btn btn-primary btn-block" id="btn-cloud-backup" style="margin-bottom:8px">📥 Télécharger ma sauvegarde</button>
-      <button class="btn btn-secondary btn-block" id="btn-cloud-restore" style="margin-bottom:16px">📂 Restaurer un fichier JSON</button>
+      <button class="btn btn-primary btn-block" id="btn-cloud-backup" style="margin-bottom:8px">📥 Télécharger ma sauvegarde complète (textes + images)</button>
+      <button class="btn btn-secondary btn-block" id="btn-cloud-restore" style="margin-bottom:8px">📂 Restaurer depuis un fichier</button>
+      <p style="opacity:0.6;font-size:13px;margin-bottom:16px">💡 Conservez ce fichier ailleurs (Drive, email, disque dur) pour une permanence garantie.</p>
       <input type="file" id="restore-file" accept=".json" style="display:none">
       <h3 style="margin-bottom:8px">Sauvegardes automatiques (${backups.length})</h3>
       <div class="page-list" id="server-backups-list" style="max-height:40vh;overflow-y:auto">
@@ -2737,18 +2738,20 @@ function openBackupPage() {
 
     $('#close-backup').addEventListener('click', () => page.classList.add('hidden'));
     $('#btn-cloud-backup').addEventListener('click', async () => {
+      showToast('Préparation de la sauvegarde…');
       try {
-        const res = await fetch('/api/data/backup', { headers: Sync.headers });
+        const res = await fetch('/api/data/full-backup', { headers: Sync.headers });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `mindmap-backup-${Date.now()}.json`;
+        a.download = `mindmap-full-backup-${new Date().toISOString().slice(0, 10)}.json`;
         a.click();
         URL.revokeObjectURL(url);
-        showToast('Sauvegarde téléchargée');
+        const imgCount = Object.keys(data.images || {}).length;
+        showToast(`Sauvegarde téléchargée (${imgCount} image${imgCount !== 1 ? 's' : ''})`);
       } catch (e) {
         showToast('Erreur: ' + e.message);
       }
@@ -2757,9 +2760,10 @@ function openBackupPage() {
     $('#restore-file').addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
+      showToast('Restauration en cours…');
       try {
         const data = JSON.parse(await file.text());
-        const res = await fetch('/api/data/restore', {
+        const res = await fetch('/api/data/full-restore', {
           method: 'POST',
           headers: Sync.headers,
           body: JSON.stringify(data),
@@ -2770,7 +2774,8 @@ function openBackupPage() {
         applyData(serverData);
         Sync.setServerTimestamp(serverData.updated_at);
         startApp();
-        showToast('Sauvegarde restaurée ✓');
+        const imgMsg = result.restoredImages ? `, ${result.restoredImages} image(s)` : '';
+        showToast(`Sauvegarde restaurée${imgMsg} ✓`);
         page.classList.add('hidden');
       } catch (err) {
         showToast('Erreur: ' + err.message);
