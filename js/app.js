@@ -32,6 +32,7 @@ const state = {
   autoReadEnabled: false,
   searchQuery: '',
   apiKeys: { deepseek: '', openai: '' },
+  noteDates: {},      // word (lowercase) -> ISO createdAt
 };
 
 // ─── DOM ─────────────────────────────────────────────────────────────────────
@@ -56,6 +57,7 @@ function getSyncPayload() {
       offsetY: state.offsetY,
       isDark: state.isDark,
       diaporamaList: state.diaporamaList,
+      noteDates: state.noteDates,
     },
   };
 }
@@ -80,6 +82,7 @@ function applyData(data) {
   state.offsetY = s.offsetY ?? state.offsetY ?? 0;
   state.isDark = s.isDark ?? state.isDark ?? true;
   state.diaporamaList = s.diaporamaList || state.diaporamaList || [];
+  state.noteDates = s.noteDates || data.noteDates || {};
   state.apiKeys = { deepseek: '', openai: '' };
   preserveLocalApiKeys();
 }
@@ -94,6 +97,7 @@ function buildLocalData(updatedAt) {
     offsetY: state.offsetY,
     isDark: state.isDark,
     diaporamaList: state.diaporamaList,
+    noteDates: state.noteDates,
     apiKeys: state.apiKeys,
     _updatedAt: updatedAt || new Date().toISOString(),
   };
@@ -125,11 +129,53 @@ function pruneOrphanNotes() {
   Object.keys(state.notes).forEach((key) => {
     if (!words.has(key)) delete state.notes[key];
   });
+  Object.keys(state.noteDates).forEach((key) => {
+    if (!words.has(key)) delete state.noteDates[key];
+  });
+}
+
+function ensureNoteDate(word) {
+  const key = word.toLowerCase();
+  if (!state.noteDates[key]) {
+    state.noteDates[key] = new Date().toISOString();
+  }
+}
+
+function getNoteDate(word) {
+  return state.noteDates[word.toLowerCase()] || null;
+}
+
+function renameNoteDate(oldWord, newWord) {
+  const oldKey = oldWord.toLowerCase();
+  const newKey = newWord.toLowerCase();
+  if (state.noteDates[oldKey] && !state.noteDates[newKey]) {
+    state.noteDates[newKey] = state.noteDates[oldKey];
+  }
+  delete state.noteDates[oldKey];
+}
+
+function formatNoteDate(iso) {
+  return new Date(iso).toLocaleDateString('fr-FR', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+function renderNoteDateFooter(word) {
+  const createdAt = getNoteDate(word);
+  if (!createdAt) return '';
+  return `<p class="note-created-at">Créée le ${formatNoteDate(createdAt)}</p>`;
 }
 
 function removeNotesForWords(words) {
   words.forEach((word) => {
-    delete state.notes[word.toLowerCase()];
+    const key = word.toLowerCase();
+    const stillUsed = state.positions.some((p) => p.word.toLowerCase() === key);
+    if (!stillUsed) {
+      delete state.notes[key];
+      delete state.noteDates[key];
+    }
   });
 }
 
@@ -190,6 +236,7 @@ function initDefaultData() {
       }
     });
   });
+  state.positions.forEach((p) => ensureNoteDate(p.word));
   save();
 }
 
@@ -473,6 +520,7 @@ function updateSuggestions(query, worldX, worldY) {
 function addWord(word, x, y) {
   const existing = state.positions.find(p => p.word.toLowerCase() === word.toLowerCase());
   state.positions.push({ word, x, y, level: 0 });
+  ensureNoteDate(word);
   if (existing && getNote(existing.word)) {
     setNote(word, getNote(existing.word));
   }
@@ -897,8 +945,9 @@ function renderNoteView() {
   `;
 
   const body = $('#note-body');
+  const dateFooter = renderNoteDateFooter(pos.word);
   if (state.isReadingMode) {
-    body.innerHTML = renderRichNote(note);
+    body.innerHTML = renderRichNote(note) + dateFooter;
     body.querySelectorAll('.wikilink').forEach(el => {
       el.addEventListener('click', () => navigateToWiki(el.dataset.word));
     });
@@ -909,7 +958,7 @@ function renderNoteView() {
       el.addEventListener('click', () => window.open(el.dataset.url, '_blank'));
     });
   } else {
-    body.innerHTML = `<textarea class="note-editor" id="note-editor">${escapeHtml(note)}</textarea>`;
+    body.innerHTML = `<textarea class="note-editor" id="note-editor">${escapeHtml(note)}</textarea>${dateFooter}`;
     $('#note-editor').addEventListener('input', (e) => {
       setNote(pos.word, e.target.value);
     });
@@ -971,6 +1020,7 @@ function navigateToWiki(targetWord) {
   } else {
     const current = state.positions[state.editingIndex];
     state.positions.push({ word: targetWord, x: current.x + 200, y: current.y + 200, level: 0 });
+    ensureNoteDate(targetWord);
     save();
     openNote(state.positions.length - 1);
   }
@@ -1193,6 +1243,7 @@ function showNoteListActions(index) {
             if (p.word === pos.word) state.positions[i].word = newName;
           });
           if (oldNote) { setNote(newName, oldNote); delete state.notes[pos.word.toLowerCase()]; }
+          renameNoteDate(pos.word, newName);
           save();
         }
         hideModal();

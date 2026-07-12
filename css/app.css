@@ -528,6 +528,15 @@ html, body {
   text-align: center;
 }
 
+.note-created-at {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(128, 128, 128, 0.2);
+  font-size: 13px;
+  opacity: 0.5;
+  text-align: center;
+}
+
 .note-view .page-header {
   flex-direction: column;
   align-items: center;
