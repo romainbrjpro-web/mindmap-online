@@ -2,8 +2,9 @@
  * Server sync — sauvegarde cloud sans connexion
  */
 
-const SAVE_INTERVAL_MS = 15 * 60 * 1000; // sauvegarde automatique toutes les 15 min
-const POLL_INTERVAL_MS = 8000; // vérification des mises à jour distantes
+const SAVE_INTERVAL_MS = 15 * 60 * 1000;
+const POLL_INTERVAL_MS = 30000; // vérifie la version toutes les 30s (léger)
+const SYNC_DEBOUNCE_MS = 2500; // regroupe les sauvegardes rapides
 
 function parseSettings(settings) {
   if (!settings) return {};
@@ -190,6 +191,13 @@ const Sync = {
     el.textContent = text;
   },
 
+  async fetchVersion() {
+    const res = await fetch(`/api/data/version?_=${Date.now()}`, this.fetchOptions());
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Erreur version');
+    return data.updated_at || null;
+  },
+
   async fetchData() {
     const res = await fetch(`/api/data?_=${Date.now()}`, this.fetchOptions());
     const data = await res.json();
@@ -235,7 +243,7 @@ const Sync = {
       return;
     }
 
-    this.syncTimer = setTimeout(() => this.runSync(getPayload), 200);
+    this.syncTimer = setTimeout(() => this.runSync(getPayload), SYNC_DEBOUNCE_MS);
   },
 
   async runSync(getPayload) {
@@ -273,11 +281,23 @@ const Sync = {
   },
 
   async pullLatest(force = false) {
-    const data = await this.fetchData();
-    const serverTime = data.updated_at ? Date.parse(data.updated_at) : 0;
-    if (force || serverTime > this.lastServerUpdatedAt) {
+    let serverTime = 0;
+    try {
+      const updatedAt = await this.fetchVersion();
+      serverTime = updatedAt ? Date.parse(updatedAt) : 0;
+    } catch (e) {
+      console.error('Version check failed, full pull:', e);
+      const data = await this.fetchData();
       if (this.onRemoteUpdate) this.onRemoteUpdate(data);
+      return data;
     }
+
+    if (!force && serverTime <= this.lastServerUpdatedAt) {
+      return null;
+    }
+
+    const data = await this.fetchData();
+    if (this.onRemoteUpdate) this.onRemoteUpdate(data);
     return data;
   },
 

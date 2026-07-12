@@ -4,7 +4,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
-const { init, stmts, getStorageInfo, dataDir, DEFAULT_USER_ID, listBackupSnapshots, restoreFromBackup } = require('./db');
+const { init, stmts, getStorageInfo, getDataVersion, dataDir, DEFAULT_USER_ID, listBackupSnapshots, restoreFromBackup } = require('./db');
 
 function safeJsonParse(value, fallback) {
   if (value == null || value === '') return fallback;
@@ -94,6 +94,15 @@ app.get('/api/auth/me', authMiddleware, (req, res) => {
 });
 
 // ─── Data sync ───────────────────────────────────────────────────────────────
+
+app.get('/api/data/version', (_req, res) => {
+  try {
+    res.json({ updated_at: getDataVersion(DEFAULT_USER_ID) });
+  } catch (e) {
+    console.error('GET /api/data/version:', e);
+    res.status(500).json({ error: 'Erreur version' });
+  }
+});
 
 app.get('/api/data', (req, res) => {
   try {

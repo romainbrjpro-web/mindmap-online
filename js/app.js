@@ -2855,24 +2855,37 @@ function startApp() {
   render();
 }
 
+async function syncInBackground() {
+  try {
+    Sync.setStatus('syncing', '☁️ Sync…');
+    await loadFromServer();
+    startApp();
+    if (state.editingIndex !== -1) renderNoteView();
+    else render();
+    if (document.body.classList.contains('home-view')) openAllNotesPage();
+    Sync.setStatus('synced', '☁️ Sync ✓');
+    setTimeout(() => Sync.setStatus('hidden'), 2000);
+  } catch (e) {
+    console.error('Background sync failed:', e);
+    Sync.setStatus('error', '☁️ Mode hors ligne');
+    setTimeout(() => Sync.setStatus('hidden'), 3000);
+  }
+}
+
 async function bootstrap() {
   const isNoteTab = new URLSearchParams(location.search).has('note');
   if (isNoteTab) showNoteLoadingShell();
 
+  load();
+  startApp();
+
   if (Sync.isServerMode()) {
-    try {
-      await loadFromServer();
-    } catch (e) {
-      console.error('Server load failed, using local cache:', e);
-      load();
-    }
     Sync.initLifecycle(getSyncPayload, handleRemoteUpdate);
     Sync.startPolling(handleRemoteUpdate);
     Sync.startPeriodicSave(getSyncPayload);
-  } else {
-    load();
+    syncInBackground();
   }
-  startApp();
+
   if (!openNoteFromUrl()) {
     openAllNotesPage();
   }

@@ -3,8 +3,8 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 
 const DEFAULT_USER_ID = 1;
-const MAX_BACKUPS = 30;
-const BACKUP_MIN_INTERVAL_MS = 60 * 1000;
+const MAX_BACKUPS = 10;
+const BACKUP_MIN_INTERVAL_MS = 5 * 60 * 1000;
 
 const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
 const dbFile = path.join(dataDir, 'store.json');
@@ -12,6 +12,7 @@ const backupDir = path.join(dataDir, 'backups');
 
 let lastBackupAt = 0;
 let dataLock = Promise.resolve();
+let storeCache = null;
 
 function safeJsonParse(value, fallback) {
   if (value == null || value === '') return fallback;
@@ -79,7 +80,8 @@ function restoreFromBackup(filename) {
   const filePath = path.join(backupDir, safe);
   if (!fs.existsSync(filePath)) throw new Error('Sauvegarde introuvable');
   const store = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  fs.writeFileSync(dbFile, JSON.stringify(store, null, 2));
+  storeCache = store;
+  fs.writeFileSync(dbFile, JSON.stringify(store));
   return store;
 }
 
@@ -102,23 +104,28 @@ function autoRecoverIfEmpty() {
   return false;
 }
 
-function loadStore() {
+function loadStore(force = false) {
+  if (!force && storeCache) return storeCache;
   if (!fs.existsSync(dbFile)) {
-    return { users: [], mindmap_data: {} };
+    storeCache = { users: [], mindmap_data: {} };
+    return storeCache;
   }
   try {
-    return JSON.parse(fs.readFileSync(dbFile, 'utf8'));
+    storeCache = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
+    return storeCache;
   } catch (e) {
     console.error('Erreur lecture store.json, tentative backup…', e.message);
     for (const file of listBackups()) {
       try {
         const data = JSON.parse(fs.readFileSync(path.join(backupDir, file), 'utf8'));
-        fs.writeFileSync(dbFile, JSON.stringify(data, null, 2));
+        fs.writeFileSync(dbFile, JSON.stringify(data));
+        storeCache = data;
         console.log(`✅ Données restaurées depuis ${file}`);
         return data;
       } catch { /* try next */ }
     }
-    return { users: [], mindmap_data: {} };
+    storeCache = { users: [], mindmap_data: {} };
+    return storeCache;
   }
 }
 
@@ -138,7 +145,8 @@ function createBackup(store, force = false) {
 }
 
 function saveStore(store) {
-  const json = JSON.stringify(store, null, 2);
+  storeCache = store;
+  const json = JSON.stringify(store);
   const tmp = dbFile + '.tmp';
   fs.writeFileSync(tmp, json);
   fs.renameSync(tmp, dbFile);
@@ -168,6 +176,7 @@ function ensureDefaultUser() {
 
 function init() {
   ensureDirs();
+  loadStore(true);
   ensureDefaultUser();
   autoRecoverIfEmpty();
   console.log(`📁 Données stockées dans : ${dataDir}`);
@@ -175,20 +184,14 @@ function init() {
 
 function getStorageInfo() {
   const stats = fs.existsSync(dbFile) ? fs.statSync(dbFile) : null;
+  const row = stmts.getData(DEFAULT_USER_ID);
   let noteCount = 0;
   let wordCount = 0;
-  let updatedAt = null;
-  try {
-    const data = stmts.getData(DEFAULT_USER_ID);
-    if (data) {
-      const notes = safeJsonParse(data.notes, {});
-      const positions = safeJsonParse(data.positions, []);
-      noteCount = Object.keys(notes).length;
-      wordCount = positions.length;
-      updatedAt = data.updated_at || null;
-    }
-  } catch (e) {
-    console.error('getStorageInfo:', e.message);
+  if (row) {
+    try {
+      noteCount = (row.notes.match(/"[^"]+"\s*:/g) || []).length;
+      wordCount = (row.positions.match(/"word"\s*:/g) || []).length;
+    } catch { /* ignore */ }
   }
   const hasDisk = process.env.RENDER_DISK === 'true';
   return {
@@ -200,9 +203,14 @@ function getStorageInfo() {
     wordCount,
     backupCount: listBackups().length,
     sizeBytes: stats?.size || 0,
-    updated_at: updatedAt,
+    updated_at: row?.updated_at || null,
     warning: hasDisk ? null : 'Plan gratuit ou disque non monté — risque de perte de données',
   };
+}
+
+function getDataVersion(userId = DEFAULT_USER_ID) {
+  const row = stmts.getData(userId);
+  return row?.updated_at || null;
 }
 
 const stmts = {
@@ -433,6 +441,7 @@ module.exports = {
   stmts,
   bcrypt,
   getStorageInfo,
+  getDataVersion,
   dataDir,
   DEFAULT_USER_ID,
   ensureDefaultUser,
