@@ -1660,6 +1660,7 @@ function renderNoteView() {
       }
     });
     editor.addEventListener('click', () => updateWikiSuggestions(editor));
+    editor.addEventListener('paste', (e) => handleEditorPaste(e, editor, pos.word));
   }
 
   startNoteTimer();
@@ -2645,6 +2646,47 @@ async function uploadImageDataUri(dataUri) {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Upload image échoué');
   return data.url;
+}
+
+function insertTextAtCursor(textarea, text) {
+  const start = textarea.selectionStart ?? textarea.value.length;
+  const end = textarea.selectionEnd ?? textarea.value.length;
+  textarea.value = textarea.value.slice(0, start) + text + textarea.value.slice(end);
+  const caret = start + text.length;
+  textarea.selectionStart = textarea.selectionEnd = caret;
+  textarea.focus();
+}
+
+// Colle une image du presse-papier en mode édition : upload + insertion de l'URL.
+async function handleEditorPaste(e, editor, word) {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  const imageItem = Array.from(items).find((it) => it.type && it.type.startsWith('image/'));
+  if (!imageItem) return; // pas d'image : laisser le collage de texte normal
+
+  e.preventDefault();
+  const file = imageItem.getAsFile();
+  if (!file) return;
+
+  showToast("Ajout de l'image…");
+  const reader = new FileReader();
+  reader.onload = async (ev) => {
+    let ref = ev.target.result;
+    try {
+      ref = await uploadImageDataUri(ev.target.result);
+    } catch (err) {
+      console.error('Paste image upload failed, storing inline:', err);
+      showToast('Image collée (hors ligne)');
+    }
+    const caret = editor.selectionStart ?? editor.value.length;
+    const before = editor.value.slice(0, caret);
+    const prefix = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
+    insertTextAtCursor(editor, `${prefix}${ref}\n`);
+    setNote(word, editor.value, { immediate: true });
+    updateWikiSuggestions(editor);
+    showToast('Image ajoutée');
+  };
+  reader.readAsDataURL(file);
 }
 
 function pickImage() {
