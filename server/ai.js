@@ -1,11 +1,15 @@
 const TEXT_PROMPT = (term) => `
-Generate a structured note about: ${term}
+Rédige une note TRÈS courte et simple sur : ${term}
 
-Use the most relevant sections depending on the subject.
-
-Be concise (8 lines max), easy to read, skip lines.
-
-Do not repeat the title.
+Contraintes strictes :
+- 5 lignes maximum au total.
+- Commence par UNE phrase simple qui définit le sujet.
+- Puis 2 à 4 puces très courtes (l'essentiel uniquement).
+- Langage simple et clair, phrases courtes, mots courants.
+- Aucun titre, aucune section, aucun texte en gras, aucune conclusion.
+- Va droit à l'essentiel, aucune information superflue.
+- Ne répète pas le titre.
+- Écris en français.
 `;
 
 const IMAGE_PROMPT = (term) => `
@@ -52,7 +56,7 @@ async function generateText(deepseekKey, word) {
   const data = await apiFetch('https://api.deepseek.com/chat/completions', deepseekKey, {
     model: 'deepseek-chat',
     messages: [{ role: 'user', content: TEXT_PROMPT(word) }],
-    max_tokens: 1000,
+    max_tokens: 400,
   });
   return data.choices?.[0]?.message?.content || null;
 }
