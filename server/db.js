@@ -4,10 +4,38 @@ const bcrypt = require('bcryptjs');
 
 const DEFAULT_USER_ID = 1;
 const MAX_BACKUPS = 30;
+const BACKUP_MIN_INTERVAL_MS = 60 * 1000;
 
 const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
 const dbFile = path.join(dataDir, 'store.json');
 const backupDir = path.join(dataDir, 'backups');
+
+let lastBackupAt = 0;
+let dataLock = Promise.resolve();
+
+function safeJsonParse(value, fallback) {
+  if (value == null || value === '') return fallback;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function ensureArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function ensureObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function withDataLock(fn) {
+  const run = dataLock.then(() => fn());
+  dataLock = run.catch(() => {});
+  return run;
+}
 
 function ensureDirs() {
   fs.mkdirSync(dataDir, { recursive: true });
@@ -94,9 +122,12 @@ function loadStore() {
   }
 }
 
-function createBackup(store) {
+function createBackup(store, force = false) {
   try {
-    const name = `store-${Date.now()}.json`;
+    const now = Date.now();
+    if (!force && now - lastBackupAt < BACKUP_MIN_INTERVAL_MS) return;
+    lastBackupAt = now;
+    const name = `store-${now}.json`;
     fs.writeFileSync(path.join(backupDir, name), JSON.stringify(store, null, 2));
     listBackups().slice(MAX_BACKUPS).forEach((f) => {
       try { fs.unlinkSync(path.join(backupDir, f)); } catch { /* ignore */ }
@@ -144,20 +175,32 @@ function init() {
 
 function getStorageInfo() {
   const stats = fs.existsSync(dbFile) ? fs.statSync(dbFile) : null;
-  const data = stmts.getData(DEFAULT_USER_ID);
-  const notes = data ? JSON.parse(data.notes) : {};
-  const positions = data ? JSON.parse(data.positions) : [];
+  let noteCount = 0;
+  let wordCount = 0;
+  let updatedAt = null;
+  try {
+    const data = stmts.getData(DEFAULT_USER_ID);
+    if (data) {
+      const notes = safeJsonParse(data.notes, {});
+      const positions = safeJsonParse(data.positions, []);
+      noteCount = Object.keys(notes).length;
+      wordCount = positions.length;
+      updatedAt = data.updated_at || null;
+    }
+  } catch (e) {
+    console.error('getStorageInfo:', e.message);
+  }
   const hasDisk = process.env.RENDER_DISK === 'true';
   return {
     mode: 'json-file',
     persistent: hasDisk,
     diskConfigured: hasDisk,
     dataDir,
-    noteCount: Object.keys(notes).length,
-    wordCount: positions.length,
+    noteCount,
+    wordCount,
     backupCount: listBackups().length,
     sizeBytes: stats?.size || 0,
-    updated_at: data?.updated_at || null,
+    updated_at: updatedAt,
     warning: hasDisk ? null : 'Plan gratuit ou disque non monté — risque de perte de données',
   };
 }
@@ -311,11 +354,8 @@ const stmts = {
     const seen = new Set();
     const merged = [];
     sources.forEach((history) => {
-      let parsed = history;
-      if (typeof history === 'string') {
-        try { parsed = JSON.parse(history); } catch { parsed = []; }
-      }
-      (parsed || []).forEach((entry) => {
+      const parsed = ensureArray(safeJsonParse(history, []));
+      parsed.forEach((entry) => {
         if (!entry?.word) return;
         const key = `${entry.word}|${entry.timestamp}`;
         if (!seen.has(key)) {
@@ -346,20 +386,23 @@ const stmts = {
   },
 
   upsertData(userId, positions, notes, history, settings) {
-    const store = loadStore();
-    const existing = store.mindmap_data[userId];
-    const mergedNotes = stmts.mergeNotesKeepLonger(existing?.notes, notes);
-    const mergedPositions = stmts.mergePositions(existing?.positions, positions);
-    const mergedHistory = stmts.mergeHistory(existing?.history, history);
-    const mergedSettings = stmts.mergeSettings(existing?.settings, settings);
-    store.mindmap_data[userId] = {
-      positions: JSON.stringify(mergedPositions),
-      notes: JSON.stringify(mergedNotes),
-      history: JSON.stringify(mergedHistory),
-      settings: mergedSettings,
-      updated_at: new Date().toISOString(),
-    };
-    saveStore(store);
+    return withDataLock(() => {
+      const store = loadStore();
+      const existing = store.mindmap_data[userId];
+      const mergedNotes = stmts.mergeNotesKeepLonger(existing?.notes, notes);
+      const mergedPositions = stmts.mergePositions(existing?.positions, positions);
+      const mergedHistory = stmts.mergeHistory(existing?.history, history);
+      const mergedSettings = stmts.mergeSettings(existing?.settings, settings);
+      store.mindmap_data[userId] = {
+        positions: JSON.stringify(mergedPositions),
+        notes: JSON.stringify(mergedNotes),
+        history: JSON.stringify(mergedHistory),
+        settings: mergedSettings,
+        updated_at: new Date().toISOString(),
+      };
+      saveStore(store);
+      return store.mindmap_data[userId];
+    });
   },
 
   exportUserData(userId) {
@@ -375,7 +418,7 @@ const stmts = {
   },
 
   importUserData(userId, data) {
-    stmts.upsertData(
+    return stmts.upsertData(
       userId,
       JSON.stringify(data.positions || []),
       JSON.stringify(data.notes || {}),

@@ -5,6 +5,16 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
 const { init, stmts, getStorageInfo, dataDir, DEFAULT_USER_ID, listBackupSnapshots, restoreFromBackup } = require('./db');
+
+function safeJsonParse(value, fallback) {
+  if (value == null || value === '') return fallback;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
 const { generateNote } = require('./ai');
 
 const app = express();
@@ -86,42 +96,51 @@ app.get('/api/auth/me', authMiddleware, (req, res) => {
 // ─── Data sync ───────────────────────────────────────────────────────────────
 
 app.get('/api/data', (req, res) => {
-  const row = stmts.getData(DEFAULT_USER_ID);
-  if (!row) {
-    return res.json({
-      positions: [],
-      notes: {},
-      history: [],
-      settings: {},
-      updated_at: null,
-    });
-  }
+  try {
+    const row = stmts.getData(DEFAULT_USER_ID);
+    if (!row) {
+      return res.json({
+        positions: [],
+        notes: {},
+        history: [],
+        settings: {},
+        updated_at: null,
+      });
+    }
 
-  res.json({
-    positions: JSON.parse(row.positions),
-    notes: JSON.parse(row.notes),
-    history: JSON.parse(row.history),
-    settings: JSON.parse(row.settings),
-    updated_at: row.updated_at,
-  });
+    res.json({
+      positions: safeJsonParse(row.positions, []),
+      notes: safeJsonParse(row.notes, {}),
+      history: safeJsonParse(row.history, []),
+      settings: safeJsonParse(row.settings, {}),
+      updated_at: row.updated_at,
+    });
+  } catch (e) {
+    console.error('GET /api/data:', e);
+    res.status(500).json({ error: 'Erreur lecture des données' });
+  }
 });
 
-app.put('/api/data', (req, res) => {
-  const { positions, notes, history, settings } = req.body;
-  if (!Array.isArray(positions) || typeof notes !== 'object') {
-    return res.status(400).json({ error: 'Données invalides' });
+app.put('/api/data', async (req, res) => {
+  try {
+    const { positions, notes, history, settings } = req.body;
+    if (!Array.isArray(positions) || typeof notes !== 'object') {
+      return res.status(400).json({ error: 'Données invalides' });
+    }
+
+    const row = await stmts.upsertData(
+      DEFAULT_USER_ID,
+      JSON.stringify(positions),
+      JSON.stringify(notes || {}),
+      JSON.stringify(history || []),
+      JSON.stringify(settings || {}),
+    );
+
+    res.json({ ok: true, updated_at: row.updated_at });
+  } catch (e) {
+    console.error('PUT /api/data:', e);
+    res.status(500).json({ error: 'Erreur sauvegarde' });
   }
-
-  stmts.upsertData(
-    DEFAULT_USER_ID,
-    JSON.stringify(positions),
-    JSON.stringify(notes || {}),
-    JSON.stringify(history || []),
-    JSON.stringify(settings || {}),
-  );
-
-  const row = stmts.getData(DEFAULT_USER_ID);
-  res.json({ ok: true, updated_at: row.updated_at });
 });
 
 app.get('/api/data/backup', (req, res) => {
@@ -131,13 +150,18 @@ app.get('/api/data/backup', (req, res) => {
   res.json(data);
 });
 
-app.post('/api/data/restore', (req, res) => {
-  const { positions, notes, history, settings } = req.body;
-  if (!Array.isArray(positions)) {
-    return res.status(400).json({ error: 'Fichier de sauvegarde invalide' });
+app.post('/api/data/restore', async (req, res) => {
+  try {
+    const { positions, notes, history, settings } = req.body;
+    if (!Array.isArray(positions)) {
+      return res.status(400).json({ error: 'Fichier de sauvegarde invalide' });
+    }
+    await stmts.importUserData(DEFAULT_USER_ID, { positions, notes, history, settings });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('POST /api/data/restore:', e);
+    res.status(500).json({ error: e.message || 'Erreur restauration' });
   }
-  stmts.importUserData(DEFAULT_USER_ID, { positions, notes, history, settings });
-  res.json({ ok: true });
 });
 
 app.get('/api/data/backups', (_req, res) => {
@@ -162,7 +186,12 @@ app.post('/api/data/restore-backup', (req, res) => {
 });
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', storage: getStorageInfo() });
+  try {
+    res.json({ status: 'ok', storage: getStorageInfo() });
+  } catch (e) {
+    console.error('GET /api/health:', e);
+    res.status(500).json({ status: 'error', error: e.message });
+  }
 });
 
 // ─── AI Generation ─────────────────────────────────────────────────────────────
@@ -201,6 +230,14 @@ app.get('*', (req, res, next) => {
 });
 
 init();
+
+process.on('uncaughtException', (e) => {
+  console.error('uncaughtException:', e);
+});
+
+process.on('unhandledRejection', (e) => {
+  console.error('unhandledRejection:', e);
+});
 
 app.listen(PORT, HOST, () => {
   const info = getStorageInfo();

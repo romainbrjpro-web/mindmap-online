@@ -199,7 +199,7 @@ const Sync = {
   },
 
   async pushData(payload, options = {}) {
-    if (!options.skipMerge) {
+    if (options.refreshBeforePush) {
       try {
         await this.fetchData();
       } catch {
