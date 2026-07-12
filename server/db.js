@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 
 const DEFAULT_USER_ID = 1;
@@ -9,6 +10,31 @@ const BACKUP_MIN_INTERVAL_MS = 5 * 60 * 1000;
 const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
 const dbFile = path.join(dataDir, 'store.json');
 const backupDir = path.join(dataDir, 'backups');
+const imagesDir = path.join(dataDir, 'images');
+
+const MIME_EXT = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/svg+xml': 'svg',
+};
+
+function saveImageDataUri(dataUri) {
+  const match = /^data:([^;]+);base64,(.+)$/s.exec(dataUri || '');
+  if (!match) throw new Error('Image invalide');
+  const mime = match[1].toLowerCase();
+  const ext = MIME_EXT[mime] || 'png';
+  const buffer = Buffer.from(match[2], 'base64');
+  const hash = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 32);
+  const filename = `${hash}.${ext}`;
+  const filePath = path.join(imagesDir, filename);
+  if (!fs.existsSync(filePath)) {
+    fs.writeFileSync(filePath, buffer);
+  }
+  return `/images/${filename}`;
+}
 
 let lastBackupAt = 0;
 let dataLock = Promise.resolve();
@@ -41,6 +67,7 @@ function withDataLock(fn) {
 function ensureDirs() {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.mkdirSync(backupDir, { recursive: true });
+  fs.mkdirSync(imagesDir, { recursive: true });
 }
 
 function listBackups() {
@@ -457,7 +484,9 @@ module.exports = {
   bcrypt,
   getStorageInfo,
   getDataVersion,
+  saveImageDataUri,
   dataDir,
+  imagesDir,
   DEFAULT_USER_ID,
   ensureDefaultUser,
   listBackupSnapshots,

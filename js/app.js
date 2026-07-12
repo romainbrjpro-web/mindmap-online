@@ -1477,7 +1477,7 @@ function renderRichNote(text) {
   if (!text) return '<p style="opacity:0.5;text-align:center">No content yet. Switch to edit mode ✍️</p>';
 
   let html = '';
-  const imgPattern = /(?:data:image\/[^;\s]+;base64,[^\s]+|https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp|svg)|blob:[^\s]+)/gi;
+  const imgPattern = /(?:data:image\/[^;\s]+;base64,[^\s]+|https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp|svg)|\/images\/[^\s]+\.(?:jpg|jpeg|png|gif|webp|svg)|blob:[^\s]+)/gi;
   const ytPattern = /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/gi;
 
   const plain = noteToPlain(text);
@@ -2420,6 +2420,18 @@ async function closeNote() {
   await syncPromise;
 }
 
+async function uploadImageDataUri(dataUri) {
+  if (!Sync.isServerMode()) return dataUri;
+  const res = await fetch('/api/images', {
+    method: 'POST',
+    headers: Sync.headers,
+    body: JSON.stringify({ data: dataUri }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Upload image échoué');
+  return data.url;
+}
+
 function pickImage() {
   const input = document.createElement('input');
   input.type = 'file';
@@ -2428,15 +2440,56 @@ function pickImage() {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       const word = state.positions[state.editingIndex].word;
+      let ref = ev.target.result;
+      try {
+        ref = await uploadImageDataUri(ev.target.result);
+      } catch (err) {
+        console.error('Image upload failed, storing inline:', err);
+        showToast('Image ajoutée (hors ligne)');
+      }
       const current = getNote(word);
-      setNote(word, current ? `${current}\n${ev.target.result}` : ev.target.result, { immediate: true });
+      setNote(word, current ? `${current}\n${ref}` : ref, { immediate: true });
       renderNoteView();
     };
     reader.readAsDataURL(file);
   };
   input.click();
+}
+
+async function migrateInlineImages() {
+  if (!Sync.isServerMode()) return;
+  const dataUriPattern = /data:image\/[^;\s]+;base64,[^\s]+/g;
+  let changed = false;
+
+  for (const key of Object.keys(state.notes)) {
+    const content = state.notes[key];
+    if (!content || !content.includes('data:image/')) continue;
+    const matches = content.match(dataUriPattern);
+    if (!matches) continue;
+
+    let updated = content;
+    for (const dataUri of matches) {
+      try {
+        const url = await uploadImageDataUri(dataUri);
+        updated = updated.split(dataUri).join(url);
+      } catch (err) {
+        console.error('Migration image échouée pour', key, err);
+      }
+    }
+    if (updated !== content) {
+      state.notes[key] = updated;
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    persistLocal(new Date().toISOString());
+    Sync.scheduleSync(getSyncPayload, true);
+    if (state.editingIndex !== -1) renderNoteView();
+    console.log('Migration des images terminée');
+  }
 }
 
 function getAllMindmapWords() {
@@ -2894,6 +2947,7 @@ async function syncInBackground() {
     if (document.body.classList.contains('home-view')) openAllNotesPage();
     Sync.setStatus('synced', '☁️ Sync ✓');
     setTimeout(() => Sync.setStatus('hidden'), 2000);
+    migrateInlineImages().catch((e) => console.error('Migration images:', e));
   } catch (e) {
     console.error('Background sync failed:', e);
     Sync.setStatus('error', '☁️ Mode hors ligne');

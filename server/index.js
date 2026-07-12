@@ -4,7 +4,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
-const { init, stmts, getStorageInfo, getDataVersion, dataDir, DEFAULT_USER_ID, listBackupSnapshots, restoreFromBackup } = require('./db');
+const { init, stmts, getStorageInfo, getDataVersion, saveImageDataUri, dataDir, imagesDir, DEFAULT_USER_ID, listBackupSnapshots, restoreFromBackup } = require('./db');
 
 function safeJsonParse(value, fallback) {
   if (value == null || value === '') return fallback;
@@ -203,6 +203,22 @@ app.get('/api/health', (_req, res) => {
   }
 });
 
+// ─── Images ──────────────────────────────────────────────────────────────────
+
+app.post('/api/images', (req, res) => {
+  try {
+    const { data } = req.body;
+    if (!data || typeof data !== 'string') {
+      return res.status(400).json({ error: 'Image manquante' });
+    }
+    const url = saveImageDataUri(data);
+    res.json({ ok: true, url });
+  } catch (e) {
+    console.error('POST /api/images:', e.message);
+    res.status(400).json({ error: e.message || 'Erreur image' });
+  }
+});
+
 // ─── AI Generation ─────────────────────────────────────────────────────────────
 
 app.post('/api/ai/generate', async (req, res) => {
@@ -222,6 +238,15 @@ app.post('/api/ai/generate', async (req, res) => {
 
   try {
     const result = await generateNote(dsKey, oaKey, word.trim());
+    if (result.image && result.image.startsWith('data:')) {
+      try {
+        const url = saveImageDataUri(result.image);
+        result.image = url;
+        result.note = [url, result.text].filter(Boolean).join('\n\n');
+      } catch (imgErr) {
+        console.error('Image save failed, keeping inline:', imgErr.message);
+      }
+    }
     res.json(result);
   } catch (e) {
     console.error('AI generation error:', e.message);
@@ -230,6 +255,11 @@ app.post('/api/ai/generate', async (req, res) => {
 });
 
 // ─── Static files ────────────────────────────────────────────────────────────
+
+app.use('/images', express.static(imagesDir, {
+  maxAge: '365d',
+  immutable: true,
+}));
 
 app.use(express.static(ROOT, { index: 'index.html' }));
 
