@@ -58,7 +58,11 @@ function noteUrl(word, edit = false) {
 function openNoteInNewTab(index, edit = false) {
   const word = state.positions[index]?.word;
   if (!word) return;
-  window.open(noteUrl(word, edit), '_blank', 'noopener');
+  window.open(noteUrl(word, edit), '_blank');
+}
+
+function isDedicatedNoteTab() {
+  return new URLSearchParams(location.search).has('note');
 }
 
 function openNoteFromUrl() {
@@ -83,6 +87,12 @@ function openNoteFromUrl() {
   document.body.classList.remove('home-view');
   openNote(idx);
   return true;
+}
+
+function returnToAllNotes() {
+  document.body.classList.add('home-view');
+  document.body.classList.remove('map-view');
+  openAllNotesPage();
 }
 
 function getSyncPayload() {
@@ -1049,11 +1059,11 @@ function renderNoteView() {
             <button onclick="App.resetTimer()" id="btn-reset-timer" style="display:none">🔄</button>
           </div>
         </div>
-        <button class="btn-icon" onclick="App.closeNote()">❌</button>
+        <button type="button" class="btn-icon" onclick="App.closeNote()">❌</button>
       </div>
       <div class="note-mode-label">${state.isReadingMode ? 'Reading View' : 'Editing View'}</div>
       <div class="note-content ${state.isReadingMode ? 'reading' : ''}" id="note-body"></div>
-      <button class="btn btn-primary btn-block" onclick="App.closeNote()">Back to All Notes 📜</button>
+      <button type="button" class="btn btn-primary btn-block" onclick="App.closeNote()">Back to All Notes 📜</button>
     </div>
   `;
 
@@ -1734,13 +1744,33 @@ function escapeHtml(str) {
 function closeNote() {
   state.editingIndex = -1;
   clearInterval(timerInterval);
+
+  if (Sync.isServerMode()) {
+    Sync.flushSync(getSyncPayload);
+  } else {
+    save();
+  }
+
+  if (isDedicatedNoteTab()) {
+    try {
+      if (window.opener && !window.opener.closed) {
+        window.opener.focus();
+      }
+    } catch (_) { /* ignore */ }
+    window.close();
+    setTimeout(() => {
+      if (document.hidden) return;
+      $('#page-note').classList.add('hidden');
+      document.title = DEFAULT_TITLE;
+      history.replaceState({ view: 'all-notes' }, '', location.pathname);
+      returnToAllNotes();
+    }, 150);
+    return;
+  }
+
   $('#page-note').classList.add('hidden');
   document.title = DEFAULT_TITLE;
-  if (location.search.includes('note=')) {
-    history.replaceState(null, '', location.pathname);
-  }
-  openAllNotesPage();
-  render();
+  returnToAllNotes();
 }
 
 function pickImage() {
