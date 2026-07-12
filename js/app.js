@@ -183,6 +183,9 @@ function preserveLocalApiKeys() {
 }
 
 function save(options = {}) {
+  if (Sync.lastServerSnapshot?.positions) {
+    state.positions = mergePositions(Sync.lastServerSnapshot.positions, state.positions);
+  }
   pruneOrphanNotes();
   const updatedAt = new Date().toISOString();
   persistLocal(updatedAt);
@@ -201,6 +204,18 @@ function mergeNotesKeepLonger(localNotes, incomingNotes) {
     }
   });
   return merged;
+}
+
+function mergePositions(...sources) {
+  const byKey = new Map();
+  sources.forEach((positions) => {
+    (positions || []).forEach((pos) => {
+      if (!pos?.word) return;
+      const key = pos.word.toLowerCase();
+      if (!byKey.has(key)) byKey.set(key, pos);
+    });
+  });
+  return Array.from(byKey.values());
 }
 
 function notesWereMerged(localNotes, incomingNotes) {
@@ -1129,6 +1144,138 @@ function addHistory(word) {
   save();
 }
 
+// ─── Image lightbox ──────────────────────────────────────────────────────────
+
+const imageViewer = {
+  scale: 1,
+  x: 0,
+  y: 0,
+  bound: false,
+  pinchStartDist: 0,
+  pinchStartScale: 1,
+};
+
+function applyImageViewerTransform() {
+  const img = $('#image-lightbox-img');
+  const label = $('#img-zoom-level');
+  if (!img) return;
+  img.style.transform = `translate(${imageViewer.x}px, ${imageViewer.y}px) scale(${imageViewer.scale})`;
+  if (label) label.textContent = `${Math.round(imageViewer.scale * 100)}%`;
+}
+
+function resetImageViewerTransform() {
+  imageViewer.scale = 1;
+  imageViewer.x = 0;
+  imageViewer.y = 0;
+  applyImageViewerTransform();
+}
+
+function setImageViewerScale(next) {
+  imageViewer.scale = Math.max(0.5, Math.min(8, next));
+  applyImageViewerTransform();
+}
+
+function ensureImageLightbox() {
+  if (imageViewer.bound) return;
+  const lb = $('#image-lightbox');
+  const stage = $('#image-lightbox-stage');
+  const img = $('#image-lightbox-img');
+  if (!lb || !stage || !img) return;
+
+  $('#image-lightbox-close')?.addEventListener('click', closeImageLightbox);
+  $('#img-zoom-in')?.addEventListener('click', () => setImageViewerScale(imageViewer.scale * 1.25));
+  $('#img-zoom-out')?.addEventListener('click', () => setImageViewerScale(imageViewer.scale / 1.25));
+  $('#img-zoom-reset')?.addEventListener('click', resetImageViewerTransform);
+
+  lb.addEventListener('click', (e) => {
+    if (e.target === lb || e.target === stage) closeImageLightbox();
+  });
+
+  stage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const factor = e.deltaY > 0 ? 0.9 : 1.1;
+    setImageViewerScale(imageViewer.scale * factor);
+  }, { passive: false });
+
+  let dragging = false;
+  let lastX = 0;
+  let lastY = 0;
+
+  stage.addEventListener('pointerdown', (e) => {
+    if (e.target !== img) return;
+    dragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    stage.classList.add('is-dragging');
+    stage.setPointerCapture(e.pointerId);
+  });
+
+  stage.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'touch' && e.isPrimary === false) return;
+    if (!dragging) return;
+    imageViewer.x += e.clientX - lastX;
+    imageViewer.y += e.clientY - lastY;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    applyImageViewerTransform();
+  });
+
+  const endDrag = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    stage.classList.remove('is-dragging');
+    try { stage.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+  };
+  stage.addEventListener('pointerup', endDrag);
+  stage.addEventListener('pointercancel', endDrag);
+
+  stage.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      imageViewer.pinchStartDist = Math.hypot(dx, dy);
+      imageViewer.pinchStartScale = imageViewer.scale;
+    }
+  }, { passive: true });
+
+  stage.addEventListener('touchmove', (e) => {
+    if (e.touches.length !== 2 || !imageViewer.pinchStartDist) return;
+    e.preventDefault();
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    const dist = Math.hypot(dx, dy);
+    setImageViewerScale(imageViewer.pinchStartScale * (dist / imageViewer.pinchStartDist));
+  }, { passive: false });
+
+  stage.addEventListener('touchend', () => {
+    imageViewer.pinchStartDist = 0;
+  });
+
+  imageViewer.bound = true;
+}
+
+function openImageLightbox(src) {
+  ensureImageLightbox();
+  const lb = $('#image-lightbox');
+  const img = $('#image-lightbox-img');
+  if (!lb || !img) return;
+  img.src = src;
+  resetImageViewerTransform();
+  lb.classList.remove('hidden');
+  lb.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeImageLightbox() {
+  const lb = $('#image-lightbox');
+  if (!lb || lb.classList.contains('hidden')) return;
+  lb.classList.add('hidden');
+  lb.setAttribute('aria-hidden', 'true');
+  document.body.style.overflow = '';
+  const img = $('#image-lightbox-img');
+  if (img) img.removeAttribute('src');
+}
+
 function renderNoteView() {
   if (state.editingIndex === -1) return;
   const pos = state.positions[state.editingIndex];
@@ -1168,6 +1315,12 @@ function renderNoteView() {
   if (state.isReadingMode) {
     body.innerHTML = renderRichNote(note) + dateFooter;
     body.addEventListener('click', (e) => {
+      const noteImg = e.target.closest('img.note-image');
+      if (noteImg?.src) {
+        e.preventDefault();
+        openImageLightbox(noteImg.src);
+        return;
+      }
       const link = e.target.closest('.wikilink');
       if (link?.dataset.word) {
         e.preventDefault();
@@ -1238,7 +1391,7 @@ function renderRichNote(text) {
   const plain = noteToPlain(text);
 
   [...plain.matchAll(imgPattern)].forEach((m) => {
-    html += `<img src="${m[0]}" alt="Note image" loading="lazy">`;
+    html += `<img class="note-image" src="${m[0]}" alt="Note image" loading="lazy">`;
   });
 
   [...plain.matchAll(ytPattern)].forEach((m) => {
@@ -2136,6 +2289,10 @@ async function closeNote() {
 
   if (Sync.isServerMode()) {
     try {
+      const serverData = await Sync.fetchData();
+      state.notes = mergeNotesKeepLonger(serverData.notes, state.notes);
+      state.positions = mergePositions(serverData.positions, state.positions);
+      persistLocal(new Date().toISOString());
       await Sync.pushData(getSyncPayload());
     } catch (e) {
       console.error('Save before close:', e);
@@ -2517,11 +2674,17 @@ function getLocalTimestamp(data) {
 function applyRemoteData(data) {
   const localStored = getLocalStoredData();
   const localNotes = localStored?.notes || state.notes;
+  const localPositions = localStored?.positions || state.positions;
   applyData(data);
   state.notes = mergeNotesKeepLonger(localNotes, state.notes);
+  state.positions = mergePositions(localPositions, state.positions);
   const updatedAt = new Date().toISOString();
   persistLocal(updatedAt);
-  if (data.updated_at) Sync.setServerTimestamp(data.updated_at);
+  Sync.rememberServerData({
+    ...data,
+    positions: state.positions,
+    notes: state.notes,
+  });
   if (notesWereMerged(localNotes, data.notes)) {
     Sync.lastPayload = getSyncPayload();
     Sync.scheduleSync(getSyncPayload, true);
@@ -2557,6 +2720,8 @@ async function loadFromServer() {
 
   if (serverTime > 0 && localTime > serverTime) {
     applyData(localData);
+    state.notes = mergeNotesKeepLonger(serverData.notes, state.notes);
+    state.positions = mergePositions(serverData.positions, state.positions);
     await Sync.pushData(getSyncPayload());
     const pushedAt = new Date().toISOString();
     persistLocal(pushedAt);
@@ -2568,8 +2733,13 @@ async function loadFromServer() {
     const localStored = getLocalStoredData();
     applyData(serverData);
     state.notes = mergeNotesKeepLonger(localStored?.notes, state.notes);
+    state.positions = mergePositions(localStored?.positions, state.positions);
     persistLocal(serverData.updated_at || new Date().toISOString());
-    Sync.setServerTimestamp(serverData.updated_at);
+    Sync.rememberServerData({
+      ...serverData,
+      positions: state.positions,
+      notes: state.notes,
+    });
     if (notesWereMerged(localStored?.notes, serverData.notes)) {
       await Sync.pushData(getSyncPayload());
     }
@@ -2622,7 +2792,8 @@ window.addEventListener('resize', resizeCanvas);
 // Keyboard shortcut: Escape closes overlays
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    if (!$('#modal-overlay').classList.contains('hidden')) hideModal();
+    if (!$('#image-lightbox')?.classList.contains('hidden')) closeImageLightbox();
+    else if (!$('#modal-overlay').classList.contains('hidden')) hideModal();
     else if (state.editingIndex !== -1) closeNote();
     else {
       $$('.page-overlay').forEach(p => p.classList.add('hidden'));

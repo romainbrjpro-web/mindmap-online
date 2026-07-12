@@ -5,11 +5,46 @@
 const SAVE_INTERVAL_MS = 15 * 60 * 1000; // sauvegarde automatique toutes les 15 min
 const POLL_INTERVAL_MS = 8000; // vérification des mises à jour distantes
 
+function mergeNotesKeepLonger(...sources) {
+  const merged = {};
+  sources.forEach((notes) => {
+    Object.entries(notes || {}).forEach(([key, content]) => {
+      const existing = merged[key] || '';
+      if ((content?.length || 0) > (existing?.length || 0)) {
+        merged[key] = content;
+      }
+    });
+  });
+  return merged;
+}
+
+function mergePositions(...sources) {
+  const byKey = new Map();
+  sources.forEach((positions) => {
+    (positions || []).forEach((pos) => {
+      if (!pos?.word) return;
+      const key = pos.word.toLowerCase();
+      if (!byKey.has(key)) byKey.set(key, pos);
+    });
+  });
+  return Array.from(byKey.values());
+}
+
+function mergePayloadWithSnapshot(payload, snapshot) {
+  if (!snapshot) return payload;
+  return {
+    ...payload,
+    positions: mergePositions(snapshot.positions, payload.positions),
+    notes: mergeNotesKeepLonger(snapshot.notes, payload.notes),
+  };
+}
+
 const Sync = {
   syncTimer: null,
   isSyncing: false,
   lastPayload: null,
   lastServerUpdatedAt: 0,
+  lastServerSnapshot: null,
   pollTimer: null,
   periodicTimer: null,
   onRemoteUpdate: null,
@@ -35,6 +70,18 @@ const Sync = {
     this.lastServerUpdatedAt = updatedAt ? Date.parse(updatedAt) : 0;
   },
 
+  rememberServerData(data) {
+    if (!data) return;
+    this.lastServerSnapshot = {
+      positions: data.positions || [],
+      notes: data.notes || {},
+      history: data.history || [],
+      settings: data.settings || {},
+      updated_at: data.updated_at || null,
+    };
+    if (data.updated_at) this.setServerTimestamp(data.updated_at);
+  },
+
   setStatus(state, text) {
     const el = document.getElementById('sync-status');
     if (!el) return;
@@ -51,15 +98,20 @@ const Sync = {
     const res = await fetch(`/api/data?_=${Date.now()}`, this.fetchOptions());
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Erreur chargement');
+    this.rememberServerData(data);
     return data;
   },
 
-  async pushData(payload) {
-    this.lastPayload = payload;
+  async pushData(payload, options = {}) {
+    let safePayload = payload;
+    if (!options.skipMerge) {
+      safePayload = mergePayloadWithSnapshot(payload, this.lastServerSnapshot);
+    }
+    this.lastPayload = safePayload;
     const res = await fetch('/api/data', {
       method: 'PUT',
       ...this.fetchOptions(),
-      body: JSON.stringify(payload),
+      body: JSON.stringify(safePayload),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Erreur sauvegarde');
@@ -104,11 +156,12 @@ const Sync = {
     if (!this.isServerMode()) return;
     clearTimeout(this.syncTimer);
     const payload = typeof getPayload === 'function' ? getPayload() : getPayload;
-    this.lastPayload = payload;
+    const safePayload = mergePayloadWithSnapshot(payload, this.lastServerSnapshot);
+    this.lastPayload = safePayload;
     fetch('/api/data', {
       method: 'PUT',
       ...this.fetchOptions(),
-      body: JSON.stringify(payload),
+      body: JSON.stringify(safePayload),
       keepalive: true,
     })
       .then((res) => res.json())
@@ -120,7 +173,6 @@ const Sync = {
     const data = await this.fetchData();
     const serverTime = data.updated_at ? Date.parse(data.updated_at) : 0;
     if (force || serverTime > this.lastServerUpdatedAt) {
-      this.setServerTimestamp(data.updated_at);
       if (this.onRemoteUpdate) this.onRemoteUpdate(data);
     }
     return data;
@@ -185,4 +237,6 @@ const Sync = {
 
 if (typeof window !== 'undefined') {
   window.Sync = Sync;
+  window.mergeNotesKeepLonger = mergeNotesKeepLonger;
+  window.mergePositions = mergePositions;
 }

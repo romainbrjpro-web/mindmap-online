@@ -6,7 +6,7 @@
   <title>MindMap & Notes Sync</title>
   <link rel="icon" href="assets/logo-mindmap.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="assets/logo-mindmap.svg">
-  <link rel="stylesheet" href="css/app.css?v=15">
+  <link rel="stylesheet" href="css/app.css?v=16">
 </head>
 <body class="dark">
   <div id="app">
@@ -75,9 +75,23 @@
 
     <!-- Toast -->
     <div class="toast hidden" id="toast"></div>
+
+    <!-- Image lightbox -->
+    <div class="image-lightbox hidden" id="image-lightbox" aria-hidden="true">
+      <button type="button" class="image-lightbox-close" id="image-lightbox-close" aria-label="Fermer">✕</button>
+      <div class="image-lightbox-toolbar">
+        <button type="button" class="btn-icon" id="img-zoom-out" title="Zoom arrière">−</button>
+        <span id="img-zoom-level">100%</span>
+        <button type="button" class="btn-icon" id="img-zoom-in" title="Zoom avant">+</button>
+        <button type="button" class="btn-icon" id="img-zoom-reset" title="Réinitialiser">⟲</button>
+      </div>
+      <div class="image-lightbox-stage" id="image-lightbox-stage">
+        <img id="image-lightbox-img" alt="">
+      </div>
+    </div>
   </div>
 
-  <script src="js/sync.js?v=15"></script>
-  <script src="js/app.js?v=22"></script>
+  <script src="js/sync.js?v=16"></script>
+  <script src="js/app.js?v=24"></script>
 </body>
 </html>

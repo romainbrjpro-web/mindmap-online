@@ -200,11 +200,47 @@ const stmts = {
     return store.mindmap_data[userId] || null;
   },
 
+  mergeNotesKeepLonger(...sources) {
+    const merged = {};
+    sources.forEach((notes) => {
+      let parsed = notes;
+      if (typeof notes === 'string') {
+        try { parsed = JSON.parse(notes); } catch { parsed = {}; }
+      }
+      Object.entries(parsed || {}).forEach(([key, content]) => {
+        const existing = merged[key] || '';
+        if ((content?.length || 0) > (existing?.length || 0)) {
+          merged[key] = content;
+        }
+      });
+    });
+    return merged;
+  },
+
+  mergePositions(...sources) {
+    const byKey = new Map();
+    sources.forEach((positions) => {
+      let parsed = positions;
+      if (typeof positions === 'string') {
+        try { parsed = JSON.parse(positions); } catch { parsed = []; }
+      }
+      (parsed || []).forEach((pos) => {
+        if (!pos?.word) return;
+        const key = pos.word.toLowerCase();
+        if (!byKey.has(key)) byKey.set(key, pos);
+      });
+    });
+    return Array.from(byKey.values());
+  },
+
   upsertData(userId, positions, notes, history, settings) {
     const store = loadStore();
+    const existing = store.mindmap_data[userId];
+    const mergedNotes = stmts.mergeNotesKeepLonger(existing?.notes, notes);
+    const mergedPositions = stmts.mergePositions(existing?.positions, positions);
     store.mindmap_data[userId] = {
-      positions,
-      notes,
+      positions: JSON.stringify(mergedPositions),
+      notes: JSON.stringify(mergedNotes),
       history,
       settings,
       updated_at: new Date().toISOString(),
