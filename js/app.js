@@ -1530,59 +1530,116 @@ window.App = {
 
 function openBackupPage() {
   const page = $('#page-account');
-  page.innerHTML = `
-    <div class="page-header">
-      <h1>Sauvegarde</h1>
-      <button class="btn-icon" id="close-backup">❌</button>
-    </div>
-    <p style="opacity:0.7;font-size:14px;margin-bottom:16px">
-      ☁️ Vos notes et photos sont sauvegardées automatiquement sur le serveur.
-    </p>
-    <button class="btn btn-primary btn-block" id="btn-cloud-backup" style="margin-bottom:8px">📥 Télécharger ma sauvegarde</button>
-    <button class="btn btn-secondary btn-block" id="btn-cloud-restore" style="margin-bottom:16px">📂 Restaurer une sauvegarde</button>
-    <input type="file" id="restore-file" accept=".json" style="display:none">
-  `;
-  page.classList.remove('hidden');
-  $('#close-backup').addEventListener('click', () => page.classList.add('hidden'));
-  $('#btn-cloud-backup').addEventListener('click', async () => {
+
+  async function render() {
+    let backups = [];
+    let storage = {};
     try {
-      const res = await fetch('/api/data/backup', { headers: Sync.headers });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `mindmap-backup-${Date.now()}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      showToast('Sauvegarde téléchargée');
-    } catch (e) {
-      showToast('Erreur: ' + e.message);
-    }
-  });
-  $('#btn-cloud-restore').addEventListener('click', () => $('#restore-file').click());
-  $('#restore-file').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    try {
-      const data = JSON.parse(await file.text());
-      const res = await fetch('/api/data/restore', {
-        method: 'POST',
-        headers: Sync.headers,
-        body: JSON.stringify(data),
+      const [backupsRes, healthRes] = await Promise.all([
+        fetch('/api/data/backups', { headers: Sync.headers }),
+        fetch('/api/health', { headers: Sync.headers }),
+      ]);
+      const backupsData = await backupsRes.json();
+      const healthData = await healthRes.json();
+      backups = backupsData.backups || [];
+      storage = healthData.storage || {};
+    } catch { /* ignore */ }
+
+    const storageWarning = storage.persistent
+      ? '☁️ Stockage persistant actif sur le serveur.'
+      : '⚠️ Disque non persistant — risque de perte. Passez au plan Starter Render.';
+
+    page.innerHTML = `
+      <div class="page-header">
+        <h1>Sauvegarde</h1>
+        <button class="btn-icon" id="close-backup">❌</button>
+      </div>
+      <p style="opacity:0.7;font-size:14px;margin-bottom:16px">${storageWarning}</p>
+      <button class="btn btn-primary btn-block" id="btn-cloud-backup" style="margin-bottom:8px">📥 Télécharger ma sauvegarde</button>
+      <button class="btn btn-secondary btn-block" id="btn-cloud-restore" style="margin-bottom:16px">📂 Restaurer un fichier JSON</button>
+      <input type="file" id="restore-file" accept=".json" style="display:none">
+      <h3 style="margin-bottom:8px">Sauvegardes automatiques (${backups.length})</h3>
+      <div class="page-list" id="server-backups-list" style="max-height:40vh;overflow-y:auto">
+        ${backups.length ? backups.map((b) => `
+          <div class="list-item" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <div>
+              <div style="font-weight:600">${b.wordCount} mot(s), ${b.noteCount} note(s)</div>
+              <div style="opacity:0.6;font-size:12px">${b.updated_at ? new Date(b.updated_at).toLocaleString('fr-FR') : b.filename}</div>
+            </div>
+            <button class="btn btn-secondary" data-restore-backup="${escapeHtml(b.filename)}">Restaurer</button>
+          </div>
+        `).join('') : '<p style="opacity:0.5">Aucune sauvegarde serveur</p>'}
+      </div>
+    `;
+
+    $('#close-backup').addEventListener('click', () => page.classList.add('hidden'));
+    $('#btn-cloud-backup').addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/data/backup', { headers: Sync.headers });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `mindmap-backup-${Date.now()}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Sauvegarde téléchargée');
+      } catch (e) {
+        showToast('Erreur: ' + e.message);
+      }
+    });
+    $('#btn-cloud-restore').addEventListener('click', () => $('#restore-file').click());
+    $('#restore-file').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        const data = JSON.parse(await file.text());
+        const res = await fetch('/api/data/restore', {
+          method: 'POST',
+          headers: Sync.headers,
+          body: JSON.stringify(data),
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error);
+        const serverData = await Sync.fetchData();
+        applyData(serverData);
+        Sync.setServerTimestamp(serverData.updated_at);
+        startApp();
+        showToast('Sauvegarde restaurée ✓');
+        page.classList.add('hidden');
+      } catch (err) {
+        showToast('Erreur: ' + err.message);
+      }
+    });
+    page.querySelectorAll('[data-restore-backup]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const filename = btn.dataset.restoreBackup;
+        if (!confirm(`Restaurer la sauvegarde du ${btn.closest('.list-item').querySelector('div div:last-child')?.textContent || filename} ?`)) return;
+        try {
+          const res = await fetch('/api/data/restore-backup', {
+            method: 'POST',
+            headers: Sync.headers,
+            body: JSON.stringify({ filename }),
+          });
+          const result = await res.json();
+          if (!res.ok) throw new Error(result.error);
+          const serverData = await Sync.fetchData();
+          applyData(serverData);
+          Sync.setServerTimestamp(serverData.updated_at);
+          startApp();
+          showToast(`Restauré : ${result.wordCount} mots, ${result.noteCount} notes ✓`);
+          page.classList.add('hidden');
+        } catch (err) {
+          showToast('Erreur: ' + err.message);
+        }
       });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error);
-      const serverData = await Sync.fetchData();
-      applyData(serverData);
-      startApp();
-      showToast('Sauvegarde restaurée ✓');
-      page.classList.add('hidden');
-    } catch (err) {
-      showToast('Erreur: ' + err.message);
-    }
-  });
+    });
+  }
+
+  page.classList.remove('hidden');
+  render();
 }
 
 async function loadFromServer() {

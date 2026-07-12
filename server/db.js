@@ -19,16 +19,59 @@ function listBackups() {
   return fs.readdirSync(backupDir).filter((f) => f.endsWith('.json')).sort().reverse();
 }
 
-function restoreLatestBackup() {
-  for (const file of listBackups()) {
-    try {
-      const data = JSON.parse(fs.readFileSync(path.join(backupDir, file), 'utf8'));
-      fs.writeFileSync(dbFile, JSON.stringify(data, null, 2));
-      console.log(`✅ Données restaurées depuis ${file}`);
-      return data;
-    } catch { /* try next */ }
+function getBackupInfo(file) {
+  try {
+    const filePath = path.join(backupDir, file);
+    const store = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    const data = store.mindmap_data?.[DEFAULT_USER_ID];
+    if (!data) return null;
+    const positions = JSON.parse(data.positions || '[]');
+    const notes = JSON.parse(data.notes || '{}');
+    return {
+      filename: file,
+      wordCount: positions.length,
+      noteCount: Object.keys(notes).length,
+      updated_at: data.updated_at || null,
+      sizeBytes: fs.statSync(filePath).size,
+    };
+  } catch {
+    return null;
   }
-  return null;
+}
+
+function listBackupSnapshots() {
+  return listBackups()
+    .map(getBackupInfo)
+    .filter(Boolean);
+}
+
+function restoreFromBackup(filename) {
+  const safe = path.basename(filename);
+  if (!safe.endsWith('.json')) throw new Error('Fichier invalide');
+  const filePath = path.join(backupDir, safe);
+  if (!fs.existsSync(filePath)) throw new Error('Sauvegarde introuvable');
+  const store = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  fs.writeFileSync(dbFile, JSON.stringify(store, null, 2));
+  return store;
+}
+
+function autoRecoverIfEmpty() {
+  const row = stmts.getData(DEFAULT_USER_ID);
+  if (!row) return false;
+  const positions = JSON.parse(row.positions || '[]');
+  const notes = JSON.parse(row.notes || '{}');
+  const isEmpty = positions.length === 0 && Object.keys(notes).length === 0;
+  if (!isEmpty) return false;
+
+  for (const file of listBackups()) {
+    const info = getBackupInfo(file);
+    if (info && (info.wordCount > 0 || info.noteCount > 0)) {
+      restoreFromBackup(file);
+      console.log(`🔄 Auto-récupération : ${file} (${info.wordCount} mots, ${info.noteCount} notes)`);
+      return true;
+    }
+  }
+  return false;
 }
 
 function loadStore() {
@@ -39,7 +82,15 @@ function loadStore() {
     return JSON.parse(fs.readFileSync(dbFile, 'utf8'));
   } catch (e) {
     console.error('Erreur lecture store.json, tentative backup…', e.message);
-    return restoreLatestBackup() || { users: [], mindmap_data: {} };
+    for (const file of listBackups()) {
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(backupDir, file), 'utf8'));
+        fs.writeFileSync(dbFile, JSON.stringify(data, null, 2));
+        console.log(`✅ Données restaurées depuis ${file}`);
+        return data;
+      } catch { /* try next */ }
+    }
+    return { users: [], mindmap_data: {} };
   }
 }
 
@@ -87,6 +138,7 @@ function ensureDefaultUser() {
 function init() {
   ensureDirs();
   ensureDefaultUser();
+  autoRecoverIfEmpty();
   console.log(`📁 Données stockées dans : ${dataDir}`);
 }
 
@@ -95,16 +147,18 @@ function getStorageInfo() {
   const data = stmts.getData(DEFAULT_USER_ID);
   const notes = data ? JSON.parse(data.notes) : {};
   const positions = data ? JSON.parse(data.positions) : [];
-  const onDisk = process.env.NODE_ENV === 'production' && !!process.env.DATA_DIR;
+  const hasDisk = process.env.RENDER_DISK === 'true';
   return {
     mode: 'json-file',
-    persistent: onDisk,
+    persistent: hasDisk,
+    diskConfigured: hasDisk,
     dataDir,
     noteCount: Object.keys(notes).length,
     wordCount: positions.length,
     backupCount: listBackups().length,
     sizeBytes: stats?.size || 0,
     updated_at: data?.updated_at || null,
+    warning: hasDisk ? null : 'Plan gratuit ou disque non monté — risque de perte de données',
   };
 }
 
@@ -181,4 +235,14 @@ const stmts = {
   },
 };
 
-module.exports = { init, stmts, bcrypt, getStorageInfo, dataDir, DEFAULT_USER_ID, ensureDefaultUser };
+module.exports = {
+  init,
+  stmts,
+  bcrypt,
+  getStorageInfo,
+  dataDir,
+  DEFAULT_USER_ID,
+  ensureDefaultUser,
+  listBackupSnapshots,
+  restoreFromBackup,
+};

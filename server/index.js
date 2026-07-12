@@ -4,7 +4,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
-const { init, stmts, getStorageInfo, dataDir, DEFAULT_USER_ID } = require('./db');
+const { init, stmts, getStorageInfo, dataDir, DEFAULT_USER_ID, listBackupSnapshots, restoreFromBackup } = require('./db');
 const { generateNote } = require('./ai');
 
 const app = express();
@@ -133,6 +133,27 @@ app.post('/api/data/restore', (req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/api/data/backups', (_req, res) => {
+  res.json({ backups: listBackupSnapshots() });
+});
+
+app.post('/api/data/restore-backup', (req, res) => {
+  const { filename } = req.body;
+  if (!filename) return res.status(400).json({ error: 'Nom de fichier requis' });
+  try {
+    restoreFromBackup(filename);
+    const row = stmts.getData(DEFAULT_USER_ID);
+    res.json({
+      ok: true,
+      updated_at: row.updated_at,
+      wordCount: JSON.parse(row.positions).length,
+      noteCount: Object.keys(JSON.parse(row.notes)).length,
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', storage: getStorageInfo() });
 });
@@ -179,7 +200,7 @@ app.listen(PORT, HOST, () => {
   console.log(`MindMap server → http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
   console.log(`💾 ${info.noteCount} note(s), ${info.wordCount} mot(s), ${info.backupCount} backup(s)`);
   if (!info.persistent) {
-    console.warn('⚠️  Pas de disque persistant — les données seront perdues au redéploiement');
+    console.warn('⚠️  DISQUE NON PERSISTANT — passez au plan Starter + disque Render');
   }
   if (JWT_SECRET === 'change-me-in-production') {
     console.warn('⚠️  Définissez JWT_SECRET dans .env pour la production');
