@@ -1,14 +1,14 @@
 const TEXT_PROMPT = (term) => `
-Rédige une note ULTRA courte sur : ${term}
+Write an ULTRA short note about: ${term}
 
-Contraintes strictes :
-- 4 lignes maximum au total.
-- Commence par UNE phrase courte qui définit le sujet (max 12 mots).
-- Puis 2 à 3 puces très courtes (max 8 mots chacune), l'essentiel absolu.
-- Mots simples et courants, aucune phrase complexe.
-- Aucun titre, aucune section, aucun gras, aucune introduction, aucune conclusion.
-- Ne répète pas le titre. Aucune information superflue.
-- Écris en français.
+Strict rules:
+- Detect the language of the title "${term}" and write the WHOLE note in that same language (e.g. English title => English note, French title => French note).
+- 4 lines maximum in total.
+- Start with ONE short sentence defining the subject (max 12 words).
+- Then 2 to 3 very short bullet points (max 8 words each), only the absolute essentials.
+- Simple, common words, no complex sentences.
+- No title, no sections, no bold, no introduction, no conclusion.
+- Do not repeat the title. No superfluous information.
 `;
 
 const IMAGE_PROMPT = (term) => `
