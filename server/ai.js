@@ -1,12 +1,15 @@
-const TEXT_PROMPT = (word) => `Generate a structured note about: ${word}
+const TEXT_PROMPT = (term) => `
+Generate a structured note about: ${term}
 
 Use the most relevant sections depending on the subject.
 
 Be concise (8 lines max), easy to read, skip lines.
 
-Do not repeat the title.`;
+Do not repeat the title.
+`;
 
-const IMAGE_PROMPT = (word) => `Create a realistic educational image representing: ${word}.
+const IMAGE_PROMPT = (term) => `
+Create a realistic educational image representing: ${term}.
 
 The image must be useful as a visual memory aid for an Obsidian knowledge note.
 
@@ -22,7 +25,8 @@ Style:
 - strong composition
 - easy to understand at small size
 - no watermark
-- not an icon`;
+- not an icon
+`;
 
 async function apiFetch(url, apiKey, body) {
   const res = await fetch(url, {
@@ -37,7 +41,8 @@ async function apiFetch(url, apiKey, body) {
   let data;
   try { data = JSON.parse(text); } catch { data = { raw: text }; }
   if (!res.ok) {
-    const msg = data?.error?.message || data?.error || text.slice(0, 200);
+    console.error('API error:', url, data);
+    const msg = data?.error?.message || data?.error || text.slice(0, 300);
     throw new Error(`${res.status}: ${msg}`);
   }
   return data;
@@ -61,21 +66,24 @@ async function urlToDataUri(url) {
 }
 
 async function generateImage(openaiKey, word) {
-  const prompt = IMAGE_PROMPT(word);
+  const imagePrompt = IMAGE_PROMPT(word);
 
   const data = await apiFetch('https://api.openai.com/v1/images/generations', openaiKey, {
     model: 'gpt-image-2',
-    prompt,
+    prompt: imagePrompt,
     size: '1024x1024',
-    quality: 'medium',
-    response_format: 'b64_json',
+    quality: 'low',
     n: 1,
   });
 
-  const item = data.data?.[0];
-  if (item?.b64_json) return `data:image/png;base64,${item.b64_json}`;
-  if (item?.url) return urlToDataUri(item.url);
-  throw new Error('gpt-image-2: aucune image retournée par l\'API');
+  const base64Image = data.data?.[0]?.b64_json;
+  if (base64Image) return `data:image/png;base64,${base64Image}`;
+
+  const url = data.data?.[0]?.url;
+  if (url) return urlToDataUri(url);
+
+  console.error('OpenAI image response:', JSON.stringify(data).slice(0, 800));
+  throw new Error('gpt-image-2: aucune image retournée (pas de b64_json)');
 }
 
 async function generateNote(deepseekKey, openaiKey, word) {
