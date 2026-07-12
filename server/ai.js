@@ -68,7 +68,7 @@ async function generateImage(openaiKey, word) {
       model: 'gpt-image-2',
       prompt,
       size: '1024x1024',
-      quality: 'low',
+      quality: 'medium',
       response_format: 'b64_json',
       n: 1,
     });
