@@ -53,7 +53,7 @@ const $$ = (sel) => document.querySelectorAll(sel);
 // ─── Persistence ─────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = 'mindmap_data';
-const DEFAULT_TITLE = 'MindMap & Notes Sync';
+const DEFAULT_TITLE = 'All Notes';
 const dirtyNoteKeys = new Set();
 
 function getProtectedNoteKeys() {
