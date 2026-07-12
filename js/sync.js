@@ -34,8 +34,17 @@ function mergeNotesOnPush(serverNotes, localNotes) {
   return merged;
 }
 
+/**
+ * À la lecture : le serveur fait autorité sur les notes qu'il possède
+ * (corrige l'affichage de versions périmées), mais on conserve les notes
+ * locales absentes du serveur (ajouts hors-ligne) et les éditions en cours
+ * non encore synchronisées (protectedKeys), pour ne jamais perdre de données.
+ */
 function mergeNotesOnPull(localNotes, serverNotes, protectedKeys = new Set()) {
-  const merged = mergeNotesKeepLonger(localNotes, serverNotes);
+  const merged = { ...(localNotes || {}) };
+  Object.entries(serverNotes || {}).forEach(([key, content]) => {
+    if (content != null) merged[key] = content;
+  });
   protectedKeys.forEach((key) => {
     const k = key.toLowerCase();
     if (localNotes?.[k] != null) merged[k] = localNotes[k];

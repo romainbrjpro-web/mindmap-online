@@ -265,15 +265,25 @@ function applyMergedSettings(...settingsSources) {
   if (merged.isDark != null) state.isDark = merged.isDark;
 }
 
-function mergeRemoteState(localStored, serverData, protectedKeys = getProtectedNoteKeys()) {
-  state.notes = mergeNotesOnPull(
-    { ...(localStored?.notes || {}), ...state.notes },
-    serverData?.notes,
-    protectedKeys,
-  );
-  state.positions = mergePositions(localStored?.positions, serverData?.positions);
-  state.history = mergeHistory(localStored?.history, serverData?.history);
-  applyMergedSettings(getSettingsFromStored(localStored), serverData?.settings || {});
+function mergeRemoteState(localStored, serverData, opts = {}) {
+  const preferLocal = opts.preferLocal || false;
+  const protectedKeys = opts.protectedKeys || getProtectedNoteKeys();
+  const localNotes = { ...(localStored?.notes || {}), ...state.notes };
+  const serverNotes = serverData?.notes || {};
+
+  if (preferLocal) {
+    // Ce périphérique a des modifs plus récentes : local prioritaire,
+    // on ajoute seulement les notes que le serveur possède en plus.
+    state.notes = { ...serverNotes, ...localNotes };
+    state.positions = mergePositions(localStored?.positions, serverData?.positions);
+    applyMergedSettings(serverData?.settings || {}, getSettingsFromStored(localStored));
+  } else {
+    // Cas normal : le serveur fait autorité, on protège les éditions en cours.
+    state.notes = mergeNotesOnPull(localNotes, serverNotes, protectedKeys);
+    state.positions = mergePositions(serverData?.positions, localStored?.positions);
+    applyMergedSettings(getSettingsFromStored(localStored), serverData?.settings || {});
+  }
+  state.history = mergeHistory(serverData?.history, localStored?.history);
 }
 
 function remoteDataWasEnriched(localStored, serverData) {
@@ -2381,7 +2391,7 @@ async function syncBeforeClose() {
     return;
   }
   const serverData = await Sync.fetchData();
-  mergeRemoteState(getLocalStoredData(), serverData);
+  mergeRemoteState(getLocalStoredData(), serverData, { preferLocal: true });
   persistLocal(new Date().toISOString());
   await Sync.pushData(getSyncPayload());
 }
@@ -2829,8 +2839,8 @@ function applyRemoteData(data) {
   const localStored = getLocalStoredData();
   applyData(data);
   mergeRemoteState(localStored, data);
-  const updatedAt = new Date().toISOString();
-  persistLocal(updatedAt);
+  // Conserver l'horodatage serveur pour ne pas fausser la comparaison au rechargement
+  persistLocal(data.updated_at || new Date().toISOString());
   Sync.rememberServerData({
     ...data,
     positions: state.positions,
@@ -2855,9 +2865,9 @@ function handleRemoteUpdate(data) {
       data.notes,
       protectedKeys,
     );
-    state.positions = mergePositions(localStored?.positions, data.positions);
+    state.positions = mergePositions(data.positions, localStored?.positions);
     applyMergedSettings(getSettingsFromStored(localStored), data.settings || {});
-    persistLocal(new Date().toISOString());
+    persistLocal(data.updated_at || new Date().toISOString());
     Sync.rememberServerData({
       ...data,
       positions: state.positions,
@@ -2898,7 +2908,7 @@ async function loadFromServer() {
 
   if (serverTime > 0 && localTime > serverTime) {
     applyData(localData);
-    mergeRemoteState(localData, serverData);
+    mergeRemoteState(localData, serverData, { preferLocal: true });
     await Sync.pushData(getSyncPayload());
     const pushedAt = new Date().toISOString();
     persistLocal(pushedAt);
