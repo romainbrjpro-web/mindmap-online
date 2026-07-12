@@ -35,6 +35,8 @@ const state = {
   noteDates: {},      // word (lowercase) -> ISO createdAt
   folders: [],        // { id, name, createdAt }
   noteFolders: {},    // word (lowercase) -> folder id
+  deletions: {},      // word (lowercase) -> deletion timestamp (ms) [tombstones]
+  wordTimes: {},      // word (lowercase) -> last user activity timestamp (ms)
 };
 
 // ─── DOM ─────────────────────────────────────────────────────────────────────
@@ -130,6 +132,8 @@ function getSyncPayload() {
       noteDates: state.noteDates,
       folders: state.folders,
       noteFolders: state.noteFolders,
+      deletions: state.deletions,
+      wordTimes: state.wordTimes,
     },
   };
 }
@@ -157,6 +161,8 @@ function applyData(data) {
   state.noteDates = s.noteDates || data.noteDates || {};
   state.folders = s.folders || data.folders || [];
   state.noteFolders = s.noteFolders || data.noteFolders || {};
+  state.deletions = s.deletions || data.deletions || {};
+  state.wordTimes = s.wordTimes || data.wordTimes || {};
   state.apiKeys = { deepseek: '', openai: '' };
   Object.keys(state.notes).forEach((key) => {
     state.notes[key] = noteToPlain(state.notes[key]);
@@ -177,6 +183,8 @@ function buildLocalData(updatedAt) {
     noteDates: state.noteDates,
     folders: state.folders,
     noteFolders: state.noteFolders,
+    deletions: state.deletions,
+    wordTimes: state.wordTimes,
     apiKeys: state.apiKeys,
     _updatedAt: updatedAt || new Date().toISOString(),
   };
@@ -246,6 +254,8 @@ function getSettingsFromStored(data) {
     noteFolders: s.noteFolders || data.noteFolders || {},
     noteDates: s.noteDates || data.noteDates || {},
     diaporamaList: s.diaporamaList || data.diaporamaList || [],
+    deletions: s.deletions || data.deletions || {},
+    wordTimes: s.wordTimes || data.wordTimes || {},
     zoom: s.zoom ?? data.zoom,
     offsetX: s.offsetX ?? data.offsetX,
     offsetY: s.offsetY ?? data.offsetY,
@@ -259,6 +269,8 @@ function applyMergedSettings(...settingsSources) {
   state.noteFolders = merged.noteFolders || {};
   state.noteDates = merged.noteDates || {};
   state.diaporamaList = merged.diaporamaList || [];
+  state.deletions = merged.deletions || {};
+  state.wordTimes = merged.wordTimes || {};
   if (merged.zoom != null) state.zoom = merged.zoom;
   if (merged.offsetX != null) state.offsetX = merged.offsetX;
   if (merged.offsetY != null) state.offsetY = merged.offsetY;
@@ -284,6 +296,7 @@ function mergeRemoteState(localStored, serverData, opts = {}) {
     applyMergedSettings(getSettingsFromStored(localStored), serverData?.settings || {});
   }
   state.history = mergeHistory(serverData?.history, localStored?.history);
+  applyTombstones();
 }
 
 function remoteDataWasEnriched(localStored, serverData) {
@@ -423,8 +436,58 @@ function removeNotesForWords(words) {
       delete state.notes[key];
       delete state.noteDates[key];
       delete state.noteFolders[key];
+      recordDeletion(word);
     }
   });
+}
+
+// Marque un mot comme supprimé pour propager la suppression aux autres appareils.
+function recordDeletion(word) {
+  const key = word.toLowerCase();
+  state.deletions[key] = Date.now();
+  delete state.wordTimes[key];
+}
+
+// Marque une activité utilisateur (création/édition) sur un mot : annule un éventuel tombstone.
+function touchWord(word) {
+  if (!word) return;
+  const key = word.toLowerCase();
+  state.wordTimes[key] = Date.now();
+  delete state.deletions[key];
+}
+
+/**
+ * Applique les tombstones : retire des positions/notes tout mot supprimé,
+ * sauf si une activité utilisateur plus récente (wordTimes) l'a recréé.
+ * Nettoie aussi les tombstones expirés (> 60 jours) pour limiter la taille.
+ */
+function applyTombstones() {
+  const deletions = state.deletions || {};
+  const wordTimes = state.wordTimes || {};
+  const EXPIRY_MS = 60 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const dead = new Set();
+
+  Object.entries(deletions).forEach(([key, delTs]) => {
+    if (now - delTs > EXPIRY_MS) {
+      delete deletions[key];
+      return;
+    }
+    if ((wordTimes[key] || 0) > delTs) {
+      delete deletions[key];
+    } else {
+      dead.add(key);
+    }
+  });
+
+  if (!dead.size) return;
+  state.positions = state.positions.filter((p) => !dead.has(p.word.toLowerCase()));
+  dead.forEach((key) => {
+    delete state.notes[key];
+    delete state.noteDates[key];
+    delete state.noteFolders[key];
+  });
+  state.diaporamaList = (state.diaporamaList || []).filter((w) => !dead.has(w.toLowerCase()));
 }
 
 function load() {
@@ -446,6 +509,7 @@ function setNote(word, content, options = {}) {
   const key = word.toLowerCase();
   state.notes[key] = noteToPlain(content);
   dirtyNoteKeys.add(key);
+  touchWord(word);
   save(options);
 }
 
@@ -551,7 +615,7 @@ function initDefaultData() {
       }
     });
   });
-  state.positions.forEach((p) => ensureNoteDate(p.word));
+  state.positions.forEach((p) => { ensureNoteDate(p.word); touchWord(p.word); });
   save();
 }
 
@@ -836,6 +900,7 @@ function addWord(word, x, y) {
   const existing = state.positions.find(p => p.word.toLowerCase() === word.toLowerCase());
   state.positions.push({ word, x, y, level: 0 });
   ensureNoteDate(word);
+  touchWord(word);
   if (existing && getNote(existing.word)) {
     setNote(word, getNote(existing.word));
   }
@@ -870,6 +935,7 @@ function showEmptySpaceMenu(screenX, screenY, world) {
   $('#modal-paste')?.addEventListener('click', () => {
     state.clipboard.forEach(p => {
       state.positions.push({ word: p.word, x: world.x + p.x, y: world.y + p.y, level: p.level });
+      touchWord(p.word);
     });
     save();
     showToast(`${state.clipboard.length} elements pasted`);
@@ -1522,6 +1588,7 @@ function navigateToWiki(targetWord) {
     const current = state.positions[state.editingIndex];
     state.positions.push({ word: targetWord, x: current.x + 200, y: current.y + 200, level: 0 });
     ensureNoteDate(targetWord);
+    touchWord(targetWord);
     save();
     openNote(state.positions.length - 1, { newTab: true });
   }
@@ -2046,6 +2113,8 @@ function showNoteListActions(index) {
           if (oldNote) { setNote(newName, oldNote); delete state.notes[pos.word.toLowerCase()]; }
           renameNoteDate(pos.word, newName);
           renameNoteFolderKey(pos.word, newName);
+          touchWord(newName);
+          recordDeletion(pos.word);
           save();
         }
         hideModal();
@@ -2867,6 +2936,7 @@ function handleRemoteUpdate(data) {
     );
     state.positions = mergePositions(data.positions, localStored?.positions);
     applyMergedSettings(getSettingsFromStored(localStored), data.settings || {});
+    applyTombstones();
     persistLocal(data.updated_at || new Date().toISOString());
     Sync.rememberServerData({
       ...data,

@@ -452,7 +452,62 @@ const stmts = {
     merged.noteFolders = stmts.mergeNoteFolders(...parsed.map((s) => s.noteFolders));
     merged.noteDates = stmts.mergeNoteDates(...parsed.map((s) => s.noteDates));
     merged.diaporamaList = stmts.mergeDiaporamaList(...parsed.map((s) => s.diaporamaList));
+    merged.deletions = stmts.mergeTimestampMaps(...parsed.map((s) => s.deletions));
+    merged.wordTimes = stmts.mergeTimestampMaps(...parsed.map((s) => s.wordTimes));
     return JSON.stringify(merged);
+  },
+
+  mergeTimestampMaps(...sources) {
+    const merged = {};
+    sources.forEach((map) => {
+      let parsed = map;
+      if (typeof map === 'string') {
+        try { parsed = JSON.parse(map); } catch { parsed = {}; }
+      }
+      Object.entries(parsed || {}).forEach(([key, ts]) => {
+        const k = key.toLowerCase();
+        const n = Number(ts) || 0;
+        if (!(k in merged) || n > merged[k]) merged[k] = n;
+      });
+    });
+    return merged;
+  },
+
+  /**
+   * Retire des positions/notes les mots supprimés (tombstones), sauf ceux
+   * recréés plus récemment (wordTimes). Nettoie les tombstones expirés.
+   * Renvoie { positions, notes, settings } nettoyés.
+   */
+  applyTombstones(positions, notes, settings) {
+    const deletions = settings.deletions || {};
+    const wordTimes = settings.wordTimes || {};
+    const EXPIRY_MS = 60 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const dead = new Set();
+
+    Object.entries(deletions).forEach(([key, delTs]) => {
+      if (now - delTs > EXPIRY_MS) {
+        delete deletions[key];
+        return;
+      }
+      if ((wordTimes[key] || 0) > delTs) {
+        delete deletions[key];
+      } else {
+        dead.add(key);
+      }
+    });
+
+    if (!dead.size) return { positions, notes, settings };
+
+    const cleanPositions = (positions || []).filter((p) => p?.word && !dead.has(p.word.toLowerCase()));
+    const cleanNotes = { ...notes };
+    dead.forEach((key) => { delete cleanNotes[key]; });
+    if (settings.noteDates) dead.forEach((key) => { delete settings.noteDates[key]; });
+    if (settings.noteFolders) dead.forEach((key) => { delete settings.noteFolders[key]; });
+    if (Array.isArray(settings.diaporamaList)) {
+      settings.diaporamaList = settings.diaporamaList.filter((w) => !dead.has(String(w).toLowerCase()));
+    }
+    return { positions: cleanPositions, notes: cleanNotes, settings };
   },
 
   upsertData(userId, positions, notes, history, settings) {
@@ -462,12 +517,13 @@ const stmts = {
       const mergedNotes = stmts.mergeNotesOnSave(existing?.notes, notes);
       const mergedPositions = stmts.mergePositions(existing?.positions, positions);
       const mergedHistory = stmts.mergeHistory(existing?.history, history);
-      const mergedSettings = stmts.mergeSettings(existing?.settings, settings);
+      const mergedSettingsObj = safeJsonParse(stmts.mergeSettings(existing?.settings, settings), {});
+      const cleaned = stmts.applyTombstones(mergedPositions, mergedNotes, mergedSettingsObj);
       store.mindmap_data[userId] = {
-        positions: JSON.stringify(mergedPositions),
-        notes: JSON.stringify(mergedNotes),
+        positions: JSON.stringify(cleaned.positions),
+        notes: JSON.stringify(cleaned.notes),
         history: JSON.stringify(mergedHistory),
-        settings: mergedSettings,
+        settings: JSON.stringify(cleaned.settings),
         updated_at: new Date().toISOString(),
       };
       saveStore(store);

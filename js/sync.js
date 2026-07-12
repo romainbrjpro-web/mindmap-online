@@ -122,6 +122,19 @@ function mergeDiaporamaList(...sources) {
   return list;
 }
 
+// Fusionne des maps { clé: timestamp } en gardant le timestamp le plus récent.
+function mergeTimestampMaps(...sources) {
+  const merged = {};
+  sources.forEach((map) => {
+    Object.entries(map || {}).forEach(([key, ts]) => {
+      const k = key.toLowerCase();
+      const n = Number(ts) || 0;
+      if (!(k in merged) || n > merged[k]) merged[k] = n;
+    });
+  });
+  return merged;
+}
+
 function mergeHistory(...sources) {
   const seen = new Set();
   const merged = [];
@@ -147,6 +160,8 @@ function mergeSettings(...sources) {
   merged.noteFolders = mergeNoteFolders(...parsed.map((s) => s.noteFolders));
   merged.noteDates = mergeNoteDates(...parsed.map((s) => s.noteDates));
   merged.diaporamaList = mergeDiaporamaList(...parsed.map((s) => s.diaporamaList));
+  merged.deletions = mergeTimestampMaps(...parsed.map((s) => s.deletions));
+  merged.wordTimes = mergeTimestampMaps(...parsed.map((s) => s.wordTimes));
   return merged;
 }
 
