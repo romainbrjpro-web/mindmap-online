@@ -63,7 +63,23 @@ async function urlToDataUri(url) {
 async function generateImage(openaiKey, word) {
   const prompt = IMAGE_PROMPT(word);
 
-  // Modèle Android (gpt-image-1)
+  try {
+    const data = await apiFetch('https://api.openai.com/v1/images/generations', openaiKey, {
+      model: 'gpt-image-2',
+      prompt,
+      size: '1024x1024',
+      quality: 'low',
+      response_format: 'b64_json',
+      n: 1,
+    });
+    const item = data.data?.[0];
+    if (item?.b64_json) return `data:image/png;base64,${item.b64_json}`;
+    if (item?.url) return urlToDataUri(item.url);
+  } catch (e) {
+    console.warn('gpt-image-2 failed:', e.message);
+  }
+
+  // Fallback gpt-image-1
   try {
     const data = await apiFetch('https://api.openai.com/v1/images/generations', openaiKey, {
       model: 'gpt-image-1',
