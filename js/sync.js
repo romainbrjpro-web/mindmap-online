@@ -70,6 +70,9 @@ const Sync = {
   scheduleSync(getPayload, immediate = false) {
     if (!this.isServerMode()) return;
     this.getPayload = getPayload;
+    if (typeof getPayload === 'function') {
+      this.lastPayload = getPayload();
+    }
     clearTimeout(this.syncTimer);
 
     if (immediate) {
@@ -152,12 +155,12 @@ const Sync = {
     this.onRemoteUpdate = onRemoteUpdate;
 
     window.addEventListener('pagehide', () => {
-      if (this.lastPayload) this.flushSync(getPayload);
+      if (getPayload) this.flushSync(getPayload);
     });
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
-        if (this.lastPayload) this.flushSync(getPayload);
+        if (getPayload) this.flushSync(getPayload);
         return;
       }
       this.pullLatest(true).catch((e) => console.error('Visibility pull error:', e));

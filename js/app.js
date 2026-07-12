@@ -164,7 +164,12 @@ function buildLocalData(updatedAt) {
 }
 
 function persistLocal(updatedAt) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(buildLocalData(updatedAt)));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(buildLocalData(updatedAt)));
+  } catch (e) {
+    console.error('localStorage save failed:', e);
+    showToast('Stockage local plein — sauvegarde cloud…');
+  }
 }
 
 function preserveLocalApiKeys() {
@@ -181,7 +186,26 @@ function save(options = {}) {
   pruneOrphanNotes();
   const updatedAt = new Date().toISOString();
   persistLocal(updatedAt);
-  Sync.scheduleSync(getSyncPayload, options.immediate);
+  if (Sync.isServerMode()) {
+    Sync.lastPayload = getSyncPayload();
+    Sync.scheduleSync(getSyncPayload, options.immediate);
+  }
+}
+
+function mergeNotesKeepLonger(localNotes, incomingNotes) {
+  const merged = { ...(incomingNotes || {}) };
+  Object.entries(localNotes || {}).forEach(([key, content]) => {
+    const existing = merged[key] || '';
+    if ((content?.length || 0) > (existing?.length || 0)) {
+      merged[key] = content;
+    }
+  });
+  return merged;
+}
+
+function notesWereMerged(localNotes, incomingNotes) {
+  const merged = mergeNotesKeepLonger(localNotes, incomingNotes);
+  return Object.keys(merged).some((key) => (merged[key] || '') !== (incomingNotes?.[key] || ''));
 }
 
 function pruneOrphanNotes() {
@@ -318,9 +342,9 @@ function getNote(word) {
   return noteToPlain(state.notes[word.toLowerCase()] || '');
 }
 
-function setNote(word, content) {
+function setNote(word, content, options = {}) {
   state.notes[word.toLowerCase()] = noteToPlain(content);
-  save();
+  save(options);
 }
 
 function noteToPlain(text) {
@@ -2070,7 +2094,13 @@ async function generateAI() {
     if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`);
 
     if (data.note) {
-      setNote(word, data.note);
+      setNote(word, data.note, { immediate: true });
+      try {
+        await Sync.pushData(getSyncPayload());
+      } catch (syncErr) {
+        console.error('Sync after AI:', syncErr);
+        showToast('Note générée — sync en attente');
+      }
       const parts = [];
       if (data.imageModel) parts.push(data.imageModel);
       if (data.warnings?.length) parts.push(`${data.warnings.length} avertissement`);
@@ -2100,12 +2130,17 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-function closeNote() {
+async function closeNote() {
   state.editingIndex = -1;
   clearInterval(timerInterval);
 
   if (Sync.isServerMode()) {
-    Sync.flushSync(getSyncPayload);
+    try {
+      await Sync.pushData(getSyncPayload());
+    } catch (e) {
+      console.error('Save before close:', e);
+      Sync.flushSync(getSyncPayload);
+    }
   } else {
     save();
   }
@@ -2143,7 +2178,7 @@ function pickImage() {
     reader.onload = (ev) => {
       const word = state.positions[state.editingIndex].word;
       const current = getNote(word);
-      setNote(word, current ? `${current}\n${ev.target.result}` : ev.target.result);
+      setNote(word, current ? `${current}\n${ev.target.result}` : ev.target.result, { immediate: true });
       renderNoteView();
     };
     reader.readAsDataURL(file);
@@ -2480,9 +2515,17 @@ function getLocalTimestamp(data) {
 }
 
 function applyRemoteData(data) {
+  const localStored = getLocalStoredData();
+  const localNotes = localStored?.notes || state.notes;
   applyData(data);
-  persistLocal(data.updated_at || new Date().toISOString());
+  state.notes = mergeNotesKeepLonger(localNotes, state.notes);
+  const updatedAt = new Date().toISOString();
+  persistLocal(updatedAt);
   if (data.updated_at) Sync.setServerTimestamp(data.updated_at);
+  if (notesWereMerged(localNotes, data.notes)) {
+    Sync.lastPayload = getSyncPayload();
+    Sync.scheduleSync(getSyncPayload, true);
+  }
 }
 
 function handleRemoteUpdate(data) {
@@ -2522,7 +2565,14 @@ async function loadFromServer() {
   }
 
   if (serverTime > 0) {
-    applyRemoteData(serverData);
+    const localStored = getLocalStoredData();
+    applyData(serverData);
+    state.notes = mergeNotesKeepLonger(localStored?.notes, state.notes);
+    persistLocal(serverData.updated_at || new Date().toISOString());
+    Sync.setServerTimestamp(serverData.updated_at);
+    if (notesWereMerged(localStored?.notes, serverData.notes)) {
+      await Sync.pushData(getSyncPayload());
+    }
     return;
   }
 
