@@ -1327,7 +1327,131 @@ const allNotesUI = {
   scrollSpeed: 1,
   built: false,
   currentFolderId: null,
+  dragNoteIndex: null,
+  dragMoved: false,
 };
+
+function clearAllNotesDropHighlights() {
+  $$('.drop-target-active').forEach((el) => el.classList.remove('drop-target-active'));
+}
+
+function bindAllNotesDragDrop(updateList) {
+  const page = $('#page-all-notes');
+  if (!page) return;
+
+  page.querySelectorAll('.note-item[data-index]').forEach((item) => {
+    item.setAttribute('draggable', 'true');
+
+    item.addEventListener('dragstart', (e) => {
+      allNotesUI.dragNoteIndex = +item.dataset.index;
+      allNotesUI.dragMoved = false;
+      if (allNotesUI.autoScroll) {
+        allNotesUI.autoScroll = false;
+        cancelAnimationFrame(allNotesScrollRAF);
+        const toggle = $('#auto-scroll-toggle');
+        if (toggle) toggle.textContent = '▶️';
+      }
+      item.classList.add('dragging');
+      e.dataTransfer.setData('application/x-mindmap-note', item.dataset.index);
+      e.dataTransfer.effectAllowed = 'move';
+    });
+
+    item.addEventListener('dragend', () => {
+      item.classList.remove('dragging');
+      clearAllNotesDropHighlights();
+      setTimeout(() => { allNotesUI.dragNoteIndex = null; }, 50);
+    });
+
+    item.addEventListener('click', (e) => {
+      if (allNotesUI.dragMoved) {
+        allNotesUI.dragMoved = false;
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      openNote(+item.dataset.index, { newTab: true });
+    });
+
+    let pressTimer = null;
+    let pointerStart = null;
+
+    item.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      pointerStart = { x: e.clientX, y: e.clientY };
+      pressTimer = setTimeout(() => {
+        allNotesUI.dragNoteIndex = +item.dataset.index;
+        allNotesUI.dragMoved = false;
+        item.classList.add('dragging');
+        try { item.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      }, 350);
+    });
+
+    item.addEventListener('pointermove', (e) => {
+      if (pressTimer && pointerStart) {
+        if (Math.hypot(e.clientX - pointerStart.x, e.clientY - pointerStart.y) > 10) {
+          clearTimeout(pressTimer);
+          pressTimer = null;
+        }
+      }
+      if (!item.classList.contains('dragging')) return;
+      if (allNotesUI.dragNoteIndex !== +item.dataset.index) return;
+      allNotesUI.dragMoved = true;
+      const target = document.elementFromPoint(e.clientX, e.clientY);
+      clearAllNotesDropHighlights();
+      target?.closest('.folder-item[data-folder-id], .drop-root-zone')
+        ?.classList.add('drop-target-active');
+    });
+
+    const endPointer = (e) => {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+      if (!item.classList.contains('dragging') || allNotesUI.dragNoteIndex !== +item.dataset.index) {
+        pointerStart = null;
+        return;
+      }
+      const target = document.elementFromPoint(e.clientX, e.clientY);
+      const folderEl = target?.closest('.folder-item[data-folder-id]');
+      const rootEl = target?.closest('.drop-root-zone');
+      const word = state.positions[allNotesUI.dragNoteIndex]?.word;
+      if (word) {
+        if (folderEl) setNoteFolder(word, folderEl.dataset.folderId);
+        else if (rootEl) setNoteFolder(word, null);
+        if (folderEl || rootEl) updateList();
+      }
+      item.classList.remove('dragging');
+      clearAllNotesDropHighlights();
+      try { item.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      allNotesUI.dragNoteIndex = null;
+      pointerStart = null;
+    };
+
+    item.addEventListener('pointerup', endPointer);
+    item.addEventListener('pointercancel', endPointer);
+  });
+
+  page.querySelectorAll('.folder-item[data-folder-id], .drop-root-zone').forEach((zone) => {
+    zone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      clearAllNotesDropHighlights();
+      zone.classList.add('drop-target-active');
+    });
+    zone.addEventListener('dragleave', (e) => {
+      if (!zone.contains(e.relatedTarget)) zone.classList.remove('drop-target-active');
+    });
+    zone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      zone.classList.remove('drop-target-active');
+      const idx = allNotesUI.dragNoteIndex ?? +e.dataTransfer.getData('application/x-mindmap-note');
+      const word = state.positions[idx]?.word;
+      if (!word) return;
+      allNotesUI.dragMoved = true;
+      if (zone.classList.contains('drop-root-zone')) setNoteFolder(word, null);
+      else setNoteFolder(word, zone.dataset.folderId);
+      updateList();
+    });
+  });
+}
 
 function openAllNotesPage() {
   const page = $('#page-all-notes');
@@ -1368,7 +1492,7 @@ function openAllNotesPage() {
       el.classList.remove('hidden');
       el.innerHTML = `
         <button type="button" class="btn-icon" id="btn-folder-back" title="Retour">←</button>
-        <span>📁 ${escapeHtml(folder.name)}</span>
+        <span class="drop-root-zone drop-root-label">📁 ${escapeHtml(folder.name)} — glisser ici pour retirer</span>
       `;
       $('#btn-folder-back')?.addEventListener('click', () => {
         allNotesUI.currentFolderId = null;
@@ -1384,7 +1508,6 @@ function openAllNotesPage() {
 
   function bindListItems() {
     page.querySelectorAll('.list-item[data-index]').forEach((item) => {
-      item.addEventListener('click', () => openNote(+item.dataset.index, { newTab: true }));
       item.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         showNoteListActions(+item.dataset.index);
@@ -1463,13 +1586,14 @@ function openAllNotesPage() {
       }).join('');
 
       const notesHtml = sorted.map((p) => `
-        <div class="list-item" data-index="${p.index}">
-          <div style="font-weight:600">${escapeHtml(p.word)}</div>
+        <div class="list-item note-item" data-index="${p.index}" draggable="true">
+          <div style="font-weight:600">📝 ${escapeHtml(p.word)}</div>
         </div>
       `).join('');
 
       list.innerHTML = folderHtml + notesHtml;
       bindListItems();
+      bindAllNotesDragDrop(updateList);
     }
   }
 

@@ -373,6 +373,33 @@ html, body {
   border: 1px solid rgba(187, 134, 252, 0.25);
 }
 
+.note-item {
+  cursor: grab;
+  touch-action: pan-y;
+}
+
+.note-item:active {
+  cursor: grabbing;
+}
+
+.note-item.dragging {
+  opacity: 0.45;
+  transform: scale(0.98);
+}
+
+.list-item.drop-target-active,
+.drop-root-zone.drop-target-active {
+  outline: 2px solid var(--accent);
+  background: rgba(187, 134, 252, 0.18);
+  opacity: 1;
+}
+
+.drop-root-label {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
 .folder-meta {
   opacity: 0.5;
   font-size: 13px;
