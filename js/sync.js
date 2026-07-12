@@ -107,6 +107,95 @@ function mergeNoteDates(...sources) {
   return merged;
 }
 
+/**
+ * Fusion LWW du contenu des notes : pour chaque clé, la source dont
+ * wordTimes est le plus récent gagne. À égalité, `tiebreak` décide.
+ * Les clés protégées (édition en cours) restent locales.
+ */
+function mergeNotesByTime(localNotes, serverNotes, localTimes = {}, serverTimes = {}, protectedKeys = new Set(), tiebreak = 'server') {
+  const local = localNotes || {};
+  const server = serverNotes || {};
+  const merged = {};
+  const keys = new Set([...Object.keys(local), ...Object.keys(server)]);
+  keys.forEach((key) => {
+    const lt = Number(localTimes[key]) || 0;
+    const st = Number(serverTimes[key]) || 0;
+    const hasLocal = local[key] != null;
+    const hasServer = server[key] != null;
+    let useLocal;
+    if (lt !== st) useLocal = lt > st;
+    else if (hasLocal !== hasServer) useLocal = hasLocal;
+    else useLocal = (tiebreak === 'local');
+    merged[key] = useLocal
+      ? (hasLocal ? local[key] : server[key])
+      : (hasServer ? server[key] : local[key]);
+  });
+  protectedKeys.forEach((pk) => {
+    const k = pk.toLowerCase();
+    if (local[k] != null) merged[k] = local[k];
+  });
+  return merged;
+}
+
+/**
+ * Fusion LWW des positions : pour chaque mot, la source dont posTimes
+ * est le plus récent gagne (placement/déplacement le plus récent).
+ */
+function mergePositionsByTime(localPos, serverPos, localTimes = {}, serverTimes = {}, tiebreak = 'server') {
+  const map = new Map();
+  const add = (arr, times, source) => {
+    (arr || []).forEach((pos) => {
+      if (!pos?.word) return;
+      const key = pos.word.toLowerCase();
+      const ts = Number(times[key]) || 0;
+      const existing = map.get(key);
+      if (!existing || ts > existing.ts || (ts === existing.ts && source === tiebreak && existing.source !== tiebreak)) {
+        map.set(key, { pos, ts, source });
+      }
+    });
+  };
+  add(localPos, localTimes, 'local');
+  add(serverPos, serverTimes, 'server');
+  return Array.from(map.values()).map((v) => v.pos);
+}
+
+/** Fusion LWW des dossiers (nom) via folderTimes; dernière source = base sur égalité. */
+function mergeFoldersByTime(parsedSources) {
+  const byId = new Map();
+  parsedSources.forEach((s, order) => {
+    const times = s.folderTimes || {};
+    (s.folders || []).forEach((folder) => {
+      if (!folder?.id) return;
+      const ts = Number(times[folder.id]) || 0;
+      const existing = byId.get(folder.id);
+      if (!existing || ts > existing.ts || (ts === existing.ts && order >= existing.order)) {
+        byId.set(folder.id, { folder: { ...folder }, ts, order });
+      }
+    });
+  });
+  return Array.from(byId.values()).map((v) => v.folder)
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+}
+
+/** Fusion LWW des affectations de dossier via noteFolderTimes; conserve null (désaffectation). */
+function mergeNoteFoldersByTime(parsedSources) {
+  const byKey = new Map();
+  parsedSources.forEach((s, order) => {
+    const times = s.noteFolderTimes || {};
+    Object.entries(s.noteFolders || {}).forEach(([rawKey, value]) => {
+      const key = rawKey.toLowerCase();
+      const ts = Number(times[key]) || 0;
+      const existing = byKey.get(key);
+      if (!existing || ts > existing.ts || (ts === existing.ts && order >= existing.order)) {
+        byKey.set(key, { value: value ?? null, ts, order });
+      }
+    });
+  });
+  const merged = {};
+  byKey.forEach((v, key) => { merged[key] = v.value; });
+  return merged;
+}
+
 function mergeDiaporamaList(...sources) {
   const seen = new Set();
   const list = [];
@@ -156,12 +245,16 @@ function mergeSettings(...sources) {
   if (!parsed.length) return {};
 
   const merged = { ...parsed[parsed.length - 1] };
-  merged.folders = mergeFolders(...parsed.map((s) => s.folders));
-  merged.noteFolders = mergeNoteFolders(...parsed.map((s) => s.noteFolders));
+  merged.folders = mergeFoldersByTime(parsed);
+  merged.noteFolders = mergeNoteFoldersByTime(parsed);
   merged.noteDates = mergeNoteDates(...parsed.map((s) => s.noteDates));
   merged.diaporamaList = mergeDiaporamaList(...parsed.map((s) => s.diaporamaList));
   merged.deletions = mergeTimestampMaps(...parsed.map((s) => s.deletions));
   merged.wordTimes = mergeTimestampMaps(...parsed.map((s) => s.wordTimes));
+  merged.posTimes = mergeTimestampMaps(...parsed.map((s) => s.posTimes));
+  merged.folderTimes = mergeTimestampMaps(...parsed.map((s) => s.folderTimes));
+  merged.folderDeletions = mergeTimestampMaps(...parsed.map((s) => s.folderDeletions));
+  merged.noteFolderTimes = mergeTimestampMaps(...parsed.map((s) => s.noteFolderTimes));
   return merged;
 }
 

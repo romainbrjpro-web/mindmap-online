@@ -36,7 +36,11 @@ const state = {
   folders: [],        // { id, name, createdAt }
   noteFolders: {},    // word (lowercase) -> folder id
   deletions: {},      // word (lowercase) -> deletion timestamp (ms) [tombstones]
-  wordTimes: {},      // word (lowercase) -> last user activity timestamp (ms)
+  wordTimes: {},      // word (lowercase) -> last note edit timestamp (ms)
+  posTimes: {},       // word (lowercase) -> last position change timestamp (ms)
+  folderTimes: {},    // folder id -> last create/rename timestamp (ms)
+  folderDeletions: {},// folder id -> deletion timestamp (ms) [tombstones]
+  noteFolderTimes: {},// word (lowercase) -> last folder-assignment change timestamp (ms)
 };
 
 // ─── DOM ─────────────────────────────────────────────────────────────────────
@@ -134,6 +138,10 @@ function getSyncPayload() {
       noteFolders: state.noteFolders,
       deletions: state.deletions,
       wordTimes: state.wordTimes,
+      posTimes: state.posTimes,
+      folderTimes: state.folderTimes,
+      folderDeletions: state.folderDeletions,
+      noteFolderTimes: state.noteFolderTimes,
     },
   };
 }
@@ -163,6 +171,10 @@ function applyData(data) {
   state.noteFolders = s.noteFolders || data.noteFolders || {};
   state.deletions = s.deletions || data.deletions || {};
   state.wordTimes = s.wordTimes || data.wordTimes || {};
+  state.posTimes = s.posTimes || data.posTimes || {};
+  state.folderTimes = s.folderTimes || data.folderTimes || {};
+  state.folderDeletions = s.folderDeletions || data.folderDeletions || {};
+  state.noteFolderTimes = s.noteFolderTimes || data.noteFolderTimes || {};
   state.apiKeys = { deepseek: '', openai: '' };
   Object.keys(state.notes).forEach((key) => {
     state.notes[key] = noteToPlain(state.notes[key]);
@@ -185,6 +197,10 @@ function buildLocalData(updatedAt) {
     noteFolders: state.noteFolders,
     deletions: state.deletions,
     wordTimes: state.wordTimes,
+    posTimes: state.posTimes,
+    folderTimes: state.folderTimes,
+    folderDeletions: state.folderDeletions,
+    noteFolderTimes: state.noteFolderTimes,
     apiKeys: state.apiKeys,
     _updatedAt: updatedAt || new Date().toISOString(),
   };
@@ -256,6 +272,10 @@ function getSettingsFromStored(data) {
     diaporamaList: s.diaporamaList || data.diaporamaList || [],
     deletions: s.deletions || data.deletions || {},
     wordTimes: s.wordTimes || data.wordTimes || {},
+    posTimes: s.posTimes || data.posTimes || {},
+    folderTimes: s.folderTimes || data.folderTimes || {},
+    folderDeletions: s.folderDeletions || data.folderDeletions || {},
+    noteFolderTimes: s.noteFolderTimes || data.noteFolderTimes || {},
     zoom: s.zoom ?? data.zoom,
     offsetX: s.offsetX ?? data.offsetX,
     offsetY: s.offsetY ?? data.offsetY,
@@ -271,6 +291,10 @@ function applyMergedSettings(...settingsSources) {
   state.diaporamaList = merged.diaporamaList || [];
   state.deletions = merged.deletions || {};
   state.wordTimes = merged.wordTimes || {};
+  state.posTimes = merged.posTimes || {};
+  state.folderTimes = merged.folderTimes || {};
+  state.folderDeletions = merged.folderDeletions || {};
+  state.noteFolderTimes = merged.noteFolderTimes || {};
   if (merged.zoom != null) state.zoom = merged.zoom;
   if (merged.offsetX != null) state.offsetX = merged.offsetX;
   if (merged.offsetY != null) state.offsetY = merged.offsetY;
@@ -280,21 +304,24 @@ function applyMergedSettings(...settingsSources) {
 function mergeRemoteState(localStored, serverData, opts = {}) {
   const preferLocal = opts.preferLocal || false;
   const protectedKeys = opts.protectedKeys || getProtectedNoteKeys();
-  const localNotes = { ...(localStored?.notes || {}), ...state.notes };
-  const serverNotes = serverData?.notes || {};
+  const tiebreak = preferLocal ? 'local' : 'server';
 
-  if (preferLocal) {
-    // Ce périphérique a des modifs plus récentes : local prioritaire,
-    // on ajoute seulement les notes que le serveur possède en plus.
-    state.notes = { ...serverNotes, ...localNotes };
-    state.positions = mergePositions(localStored?.positions, serverData?.positions);
-    applyMergedSettings(serverData?.settings || {}, getSettingsFromStored(localStored));
-  } else {
-    // Cas normal : le serveur fait autorité, on protège les éditions en cours.
-    state.notes = mergeNotesOnPull(localNotes, serverNotes, protectedKeys);
-    state.positions = mergePositions(serverData?.positions, localStored?.positions);
-    applyMergedSettings(getSettingsFromStored(localStored), serverData?.settings || {});
-  }
+  // Côté local = état courant en mémoire (source la plus fraîche), avec ses horodatages.
+  const localSide = getSyncPayload().settings;
+  const serverSide = serverData?.settings || {};
+  const localNotes = { ...(localStored?.notes || {}), ...state.notes };
+
+  state.notes = mergeNotesByTime(
+    localNotes, serverData?.notes,
+    localSide.wordTimes, serverSide.wordTimes,
+    protectedKeys, tiebreak,
+  );
+  state.positions = mergePositionsByTime(
+    state.positions, serverData?.positions,
+    localSide.posTimes, serverSide.posTimes, tiebreak,
+  );
+  // La dernière source l'emporte sur égalité d'horodatage : local si preferLocal.
+  applyMergedSettings(...(preferLocal ? [serverSide, localSide] : [localSide, serverSide]));
   state.history = mergeHistory(serverData?.history, localStored?.history);
   applyTombstones();
 }
@@ -350,6 +377,8 @@ function createFolder(name) {
   const folder = { id: generateId(), name: name.trim(), createdAt: new Date().toISOString() };
   state.folders.push(folder);
   state.folders.sort((a, b) => a.name.localeCompare(b.name));
+  state.folderTimes[folder.id] = Date.now();
+  delete state.folderDeletions[folder.id];
   save();
   return folder;
 }
@@ -357,8 +386,13 @@ function createFolder(name) {
 function deleteFolder(folderId) {
   state.folders = state.folders.filter((f) => f.id !== folderId);
   Object.keys(state.noteFolders).forEach((key) => {
-    if (state.noteFolders[key] === folderId) delete state.noteFolders[key];
+    if (state.noteFolders[key] === folderId) {
+      state.noteFolders[key] = null;
+      state.noteFolderTimes[key] = Date.now();
+    }
   });
+  state.folderDeletions[folderId] = Date.now();
+  delete state.folderTimes[folderId];
   save();
 }
 
@@ -367,6 +401,7 @@ function renameFolder(folderId, newName) {
   if (folder) {
     folder.name = newName.trim();
     state.folders.sort((a, b) => a.name.localeCompare(b.name));
+    state.folderTimes[folderId] = Date.now();
     save();
   }
 }
@@ -377,11 +412,9 @@ function getNoteFolderId(word) {
 
 function setNoteFolder(word, folderId) {
   const key = word.toLowerCase();
-  if (folderId) {
-    state.noteFolders[key] = folderId;
-  } else {
-    delete state.noteFolders[key];
-  }
+  // On conserve la clé (avec null) pour propager la désaffectation aux autres appareils.
+  state.noteFolders[key] = folderId || null;
+  state.noteFolderTimes[key] = Date.now();
   save();
 }
 
@@ -390,7 +423,9 @@ function renameNoteFolderKey(oldWord, newWord) {
   const newKey = newWord.toLowerCase();
   if (state.noteFolders[oldKey]) {
     state.noteFolders[newKey] = state.noteFolders[oldKey];
-    delete state.noteFolders[oldKey];
+    state.noteFolderTimes[newKey] = Date.now();
+    state.noteFolders[oldKey] = null;
+    state.noteFolderTimes[oldKey] = Date.now();
   }
 }
 
@@ -456,6 +491,12 @@ function touchWord(word) {
   delete state.deletions[key];
 }
 
+// Marque un changement de position (création/déplacement) d'un mot.
+function touchPos(word) {
+  if (!word) return;
+  state.posTimes[word.toLowerCase()] = Date.now();
+}
+
 /**
  * Applique les tombstones : retire des positions/notes tout mot supprimé,
  * sauf si une activité utilisateur plus récente (wordTimes) l'a recréé.
@@ -480,14 +521,48 @@ function applyTombstones() {
     }
   });
 
-  if (!dead.size) return;
-  state.positions = state.positions.filter((p) => !dead.has(p.word.toLowerCase()));
-  dead.forEach((key) => {
-    delete state.notes[key];
-    delete state.noteDates[key];
-    delete state.noteFolders[key];
+  if (dead.size) {
+    state.positions = state.positions.filter((p) => !dead.has(p.word.toLowerCase()));
+    dead.forEach((key) => {
+      delete state.notes[key];
+      delete state.noteDates[key];
+      delete state.noteFolders[key];
+    });
+    state.diaporamaList = (state.diaporamaList || []).filter((w) => !dead.has(w.toLowerCase()));
+  }
+
+  applyFolderTombstones();
+}
+
+/**
+ * Applique les tombstones de dossiers : retire un dossier supprimé sauf s'il
+ * a été recréé/renommé plus récemment (folderTimes). Les notes affectées à un
+ * dossier mort repassent en "non classé".
+ */
+function applyFolderTombstones() {
+  const folderDeletions = state.folderDeletions || {};
+  const folderTimes = state.folderTimes || {};
+  const EXPIRY_MS = 60 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const deadFolders = new Set();
+
+  Object.entries(folderDeletions).forEach(([id, delTs]) => {
+    if (now - delTs > EXPIRY_MS) {
+      delete folderDeletions[id];
+      return;
+    }
+    if ((folderTimes[id] || 0) > delTs) {
+      delete folderDeletions[id];
+    } else {
+      deadFolders.add(id);
+    }
   });
-  state.diaporamaList = (state.diaporamaList || []).filter((w) => !dead.has(w.toLowerCase()));
+
+  if (!deadFolders.size) return;
+  state.folders = (state.folders || []).filter((f) => !deadFolders.has(f.id));
+  Object.keys(state.noteFolders).forEach((key) => {
+    if (deadFolders.has(state.noteFolders[key])) state.noteFolders[key] = null;
+  });
 }
 
 function load() {
@@ -615,7 +690,7 @@ function initDefaultData() {
       }
     });
   });
-  state.positions.forEach((p) => { ensureNoteDate(p.word); touchWord(p.word); });
+  state.positions.forEach((p) => { ensureNoteDate(p.word); touchWord(p.word); touchPos(p.word); });
   save();
 }
 
@@ -901,6 +976,7 @@ function addWord(word, x, y) {
   state.positions.push({ word, x, y, level: 0 });
   ensureNoteDate(word);
   touchWord(word);
+  touchPos(word);
   if (existing && getNote(existing.word)) {
     setNote(word, getNote(existing.word));
   }
@@ -936,6 +1012,7 @@ function showEmptySpaceMenu(screenX, screenY, world) {
     state.clipboard.forEach(p => {
       state.positions.push({ word: p.word, x: world.x + p.x, y: world.y + p.y, level: p.level });
       touchWord(p.word);
+      touchPos(p.word);
     });
     save();
     showToast(`${state.clipboard.length} elements pasted`);
@@ -1068,6 +1145,7 @@ function onPointerMove(e) {
     state.selected.forEach(i => {
       state.positions[i].x += dx / state.zoom;
       state.positions[i].y += dy / state.zoom;
+      touchPos(state.positions[i].word);
     });
     dragStart.x = x;
     dragStart.y = y;
@@ -1589,6 +1667,7 @@ function navigateToWiki(targetWord) {
     state.positions.push({ word: targetWord, x: current.x + 200, y: current.y + 200, level: 0 });
     ensureNoteDate(targetWord);
     touchWord(targetWord);
+    touchPos(targetWord);
     save();
     openNote(state.positions.length - 1, { newTab: true });
   }
@@ -2114,6 +2193,7 @@ function showNoteListActions(index) {
           renameNoteDate(pos.word, newName);
           renameNoteFolderKey(pos.word, newName);
           touchWord(newName);
+          touchPos(newName);
           recordDeletion(pos.word);
           save();
         }
@@ -2929,13 +3009,19 @@ function handleRemoteUpdate(data) {
   if (state.editingIndex !== -1) {
     const localStored = getLocalStoredData();
     const protectedKeys = getProtectedNoteKeys();
-    state.notes = mergeNotesOnPull(
+    const localSide = getSyncPayload().settings;
+    const serverSide = data.settings || {};
+    state.notes = mergeNotesByTime(
       { ...(localStored?.notes || {}), ...state.notes },
       data.notes,
-      protectedKeys,
+      localSide.wordTimes, serverSide.wordTimes,
+      protectedKeys, 'server',
     );
-    state.positions = mergePositions(data.positions, localStored?.positions);
-    applyMergedSettings(getSettingsFromStored(localStored), data.settings || {});
+    state.positions = mergePositionsByTime(
+      state.positions, data.positions,
+      localSide.posTimes, serverSide.posTimes, 'server',
+    );
+    applyMergedSettings(localSide, serverSide);
     applyTombstones();
     persistLocal(data.updated_at || new Date().toISOString());
     Sync.rememberServerData({

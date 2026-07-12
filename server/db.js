@@ -346,6 +346,83 @@ const stmts = {
     return Array.from(byKey.values());
   },
 
+  // Fusion LWW du contenu des notes : le timestamp (wordTimes) le plus récent gagne.
+  mergeNotesByTime(existingNotes, incomingNotes, existingTimes = {}, incomingTimes = {}) {
+    const a = safeJsonParse(existingNotes, {});
+    const b = safeJsonParse(incomingNotes, {});
+    const at = existingTimes || {};
+    const bt = incomingTimes || {};
+    const merged = {};
+    new Set([...Object.keys(a), ...Object.keys(b)]).forEach((key) => {
+      const ta = Number(at[key]) || 0;
+      const tb = Number(bt[key]) || 0;
+      const hasA = a[key] != null;
+      const hasB = b[key] != null;
+      let useB;
+      if (ta !== tb) useB = tb > ta;
+      else if (hasA !== hasB) useB = hasB;
+      else useB = true; // égalité : l'entrant (push le plus récent) gagne
+      merged[key] = useB ? (hasB ? b[key] : a[key]) : (hasA ? a[key] : b[key]);
+    });
+    return merged;
+  },
+
+  // Fusion LWW des positions via posTimes.
+  mergePositionsByTime(existingPos, incomingPos, existingTimes = {}, incomingTimes = {}) {
+    const a = typeof existingPos === 'string' ? safeJsonParse(existingPos, []) : (existingPos || []);
+    const b = typeof incomingPos === 'string' ? safeJsonParse(incomingPos, []) : (incomingPos || []);
+    const map = new Map();
+    const add = (arr, times, preferOnTie) => {
+      (arr || []).forEach((pos) => {
+        if (!pos?.word) return;
+        const key = pos.word.toLowerCase();
+        const ts = Number((times || {})[key]) || 0;
+        const existing = map.get(key);
+        if (!existing || ts > existing.ts || (ts === existing.ts && preferOnTie)) {
+          map.set(key, { pos, ts });
+        }
+      });
+    };
+    add(a, existingTimes, false);
+    add(b, incomingTimes, true); // entrant gagne à égalité
+    return Array.from(map.values()).map((v) => v.pos);
+  },
+
+  mergeFoldersByTime(parsedSources) {
+    const byId = new Map();
+    parsedSources.forEach((s, order) => {
+      const times = s.folderTimes || {};
+      (s.folders || []).forEach((folder) => {
+        if (!folder?.id) return;
+        const ts = Number(times[folder.id]) || 0;
+        const existing = byId.get(folder.id);
+        if (!existing || ts > existing.ts || (ts === existing.ts && order >= existing.order)) {
+          byId.set(folder.id, { folder: { ...folder }, ts, order });
+        }
+      });
+    });
+    return Array.from(byId.values()).map((v) => v.folder)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  },
+
+  mergeNoteFoldersByTime(parsedSources) {
+    const byKey = new Map();
+    parsedSources.forEach((s, order) => {
+      const times = s.noteFolderTimes || {};
+      Object.entries(s.noteFolders || {}).forEach(([rawKey, value]) => {
+        const key = rawKey.toLowerCase();
+        const ts = Number(times[key]) || 0;
+        const existing = byKey.get(key);
+        if (!existing || ts > existing.ts || (ts === existing.ts && order >= existing.order)) {
+          byKey.set(key, { value: value ?? null, ts, order });
+        }
+      });
+    });
+    const merged = {};
+    byKey.forEach((v, key) => { merged[key] = v.value; });
+    return merged;
+  },
+
   mergeFolders(...sources) {
     const byId = new Map();
     sources.forEach((folders) => {
@@ -448,12 +525,16 @@ const stmts = {
     if (!parsed.length) return '{}';
 
     const merged = { ...parsed[parsed.length - 1] };
-    merged.folders = stmts.mergeFolders(...parsed.map((s) => s.folders));
-    merged.noteFolders = stmts.mergeNoteFolders(...parsed.map((s) => s.noteFolders));
+    merged.folders = stmts.mergeFoldersByTime(parsed);
+    merged.noteFolders = stmts.mergeNoteFoldersByTime(parsed);
     merged.noteDates = stmts.mergeNoteDates(...parsed.map((s) => s.noteDates));
     merged.diaporamaList = stmts.mergeDiaporamaList(...parsed.map((s) => s.diaporamaList));
     merged.deletions = stmts.mergeTimestampMaps(...parsed.map((s) => s.deletions));
     merged.wordTimes = stmts.mergeTimestampMaps(...parsed.map((s) => s.wordTimes));
+    merged.posTimes = stmts.mergeTimestampMaps(...parsed.map((s) => s.posTimes));
+    merged.folderTimes = stmts.mergeTimestampMaps(...parsed.map((s) => s.folderTimes));
+    merged.folderDeletions = stmts.mergeTimestampMaps(...parsed.map((s) => s.folderDeletions));
+    merged.noteFolderTimes = stmts.mergeTimestampMaps(...parsed.map((s) => s.noteFolderTimes));
     return JSON.stringify(merged);
   },
 
@@ -497,6 +578,30 @@ const stmts = {
       }
     });
 
+    // Tombstones de dossiers.
+    const folderDeletions = settings.folderDeletions || {};
+    const folderTimes = settings.folderTimes || {};
+    const deadFolders = new Set();
+    Object.entries(folderDeletions).forEach(([id, delTs]) => {
+      if (now - delTs > EXPIRY_MS) {
+        delete folderDeletions[id];
+        return;
+      }
+      if ((folderTimes[id] || 0) > delTs) {
+        delete folderDeletions[id];
+      } else {
+        deadFolders.add(id);
+      }
+    });
+    if (deadFolders.size) {
+      settings.folders = (settings.folders || []).filter((f) => !deadFolders.has(f.id));
+      if (settings.noteFolders) {
+        Object.keys(settings.noteFolders).forEach((key) => {
+          if (deadFolders.has(settings.noteFolders[key])) settings.noteFolders[key] = null;
+        });
+      }
+    }
+
     if (!dead.size) return { positions, notes, settings };
 
     const cleanPositions = (positions || []).filter((p) => p?.word && !dead.has(p.word.toLowerCase()));
@@ -514,8 +619,14 @@ const stmts = {
     return withDataLock(() => {
       const store = loadStore();
       const existing = store.mindmap_data[userId];
-      const mergedNotes = stmts.mergeNotesOnSave(existing?.notes, notes);
-      const mergedPositions = stmts.mergePositions(existing?.positions, positions);
+      const existingSettings = safeJsonParse(existing?.settings, {});
+      const incomingSettings = safeJsonParse(settings, {});
+      const mergedNotes = stmts.mergeNotesByTime(
+        existing?.notes, notes, existingSettings.wordTimes, incomingSettings.wordTimes,
+      );
+      const mergedPositions = stmts.mergePositionsByTime(
+        existing?.positions, positions, existingSettings.posTimes, incomingSettings.posTimes,
+      );
       const mergedHistory = stmts.mergeHistory(existing?.history, history);
       const mergedSettingsObj = safeJsonParse(stmts.mergeSettings(existing?.settings, settings), {});
       const cleaned = stmts.applyTombstones(mergedPositions, mergedNotes, mergedSettingsObj);
