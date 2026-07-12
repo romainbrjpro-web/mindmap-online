@@ -2060,8 +2060,8 @@ function openAllNotesPage() {
         const count = countNotesInFolder(f.id);
         return `
           <div class="list-item folder-item" data-folder-id="${escapeHtml(f.id)}">
-            <div style="font-weight:600">📁 ${escapeHtml(f.name)}</div>
-            <div class="folder-meta">${count} note${count !== 1 ? 's' : ''}</div>
+            <span class="folder-name">📁 ${escapeHtml(f.name)}</span>
+            <span class="folder-meta">${count} note${count !== 1 ? 's' : ''}</span>
           </div>
         `;
       }).join('');
@@ -2088,7 +2088,7 @@ function openAllNotesPage() {
         </div>
         <div id="all-notes-breadcrumb" class="all-notes-breadcrumb hidden"></div>
         <input type="text" id="all-notes-search" class="all-notes-search" placeholder="Search in all notes..." value="">
-        <div class="page-list" id="all-notes-list" style="max-height:calc(100vh - 300px);overflow-y:auto"></div>
+        <div class="page-list" id="all-notes-list" style="overflow-y:auto"></div>
         <div class="auto-scroll-bar">
           <button class="btn-icon" id="auto-scroll-toggle">▶️</button>
           <span>Auto-Scroll</span>
