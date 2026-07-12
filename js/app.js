@@ -1049,58 +1049,26 @@ function showMapView() {
 
 let allNotesScrollRAF = null;
 
+const allNotesUI = {
+  searchQ: '',
+  autoScroll: false,
+  scrollSpeed: 1,
+  built: false,
+};
+
 function openAllNotesPage() {
   const page = $('#page-all-notes');
   document.body.classList.add('home-view');
   document.body.classList.remove('map-view');
-  let searchQ = '';
-  let autoScroll = false;
-  let scrollSpeed = 1;
 
-  function render() {
-    const sorted = state.positions
+  function getSorted() {
+    return state.positions
       .map((p, i) => ({ ...p, index: i }))
-      .filter(p => p.word.toLowerCase().includes(searchQ.toLowerCase()))
+      .filter(p => p.word.toLowerCase().includes(allNotesUI.searchQ.toLowerCase()))
       .sort((a, b) => a.word.localeCompare(b.word));
+  }
 
-    const exactMatch = sorted.some(p => p.word.toLowerCase() === searchQ.toLowerCase());
-
-    page.innerHTML = `
-      <div class="all-notes-layout">
-        <div class="page-header page-header-centered">
-          <button class="btn-icon header-side" id="btn-show-map" title="Mind Map">🗺️</button>
-          <h1>All Notes</h1>
-          <div class="header-side"></div>
-        </div>
-        <input type="text" id="all-notes-search" class="all-notes-search" placeholder="Search in all notes..." value="${escapeHtml(searchQ)}">
-        ${searchQ && !exactMatch ? `
-          <div class="list-item create" id="create-from-search" style="color:var(--accent);font-weight:600;text-align:center">
-            ✨ Create "${escapeHtml(searchQ)}"
-          </div>
-        ` : ''}
-        <div class="page-list" id="all-notes-list" style="max-height:calc(100vh - 280px);overflow-y:auto">
-          ${sorted.map(p => `
-            <div class="list-item" data-index="${p.index}">
-              <div style="font-weight:600">${escapeHtml(p.word)}</div>
-            </div>
-          `).join('')}
-        </div>
-        <div class="auto-scroll-bar">
-          <button class="btn-icon" id="auto-scroll-toggle">${autoScroll ? '⏸️' : '▶️'}</button>
-          <span>Auto-Scroll</span>
-          <input type="range" id="scroll-speed" min="0.5" max="30" step="0.5" value="${scrollSpeed}">
-          <span id="speed-label">${scrollSpeed}x</span>
-        </div>
-      </div>
-    `;
-
-    $('#all-notes-search').addEventListener('input', (e) => { searchQ = e.target.value; render(); });
-    $('#btn-show-map').addEventListener('click', showMapView);
-    $('#create-from-search')?.addEventListener('click', () => {
-      addWord(searchQ, -state.offsetX, -state.offsetY);
-      openNote(state.positions.length - 1);
-      state.isReadingMode = false;
-    });
+  function bindListItems() {
     page.querySelectorAll('.list-item[data-index]').forEach(item => {
       item.addEventListener('click', () => openNote(+item.dataset.index));
       item.addEventListener('contextmenu', (e) => {
@@ -1108,28 +1076,100 @@ function openAllNotesPage() {
         showNoteListActions(+item.dataset.index);
       });
     });
+  }
+
+  function updateList() {
+    const sorted = getSorted();
+    const exactMatch = sorted.some(p => p.word.toLowerCase() === allNotesUI.searchQ.toLowerCase());
+    const createBtn = $('#create-from-search');
+
+    if (allNotesUI.searchQ && !exactMatch) {
+      if (!createBtn) {
+        const el = document.createElement('div');
+        el.id = 'create-from-search';
+        el.className = 'list-item create';
+        el.style.cssText = 'color:var(--accent);font-weight:600;text-align:center';
+        el.addEventListener('click', () => {
+          addWord(allNotesUI.searchQ, -state.offsetX, -state.offsetY);
+          openNote(state.positions.length - 1);
+          state.isReadingMode = false;
+        });
+        $('#all-notes-list').before(el);
+      }
+      createBtn.textContent = `✨ Create "${allNotesUI.searchQ}"`;
+    } else {
+      createBtn?.remove();
+    }
+
+    const list = $('#all-notes-list');
+    if (list) {
+      list.innerHTML = sorted.map(p => `
+        <div class="list-item" data-index="${p.index}">
+          <div style="font-weight:600">${escapeHtml(p.word)}</div>
+        </div>
+      `).join('');
+      bindListItems();
+    }
+  }
+
+  function buildShell() {
+    page.innerHTML = `
+      <div class="all-notes-layout">
+        <div class="page-header page-header-centered">
+          <button class="btn-icon header-side" id="btn-show-map" title="Mind Map">🗺️</button>
+          <h1>All Notes</h1>
+          <div class="header-side"></div>
+        </div>
+        <input type="text" id="all-notes-search" class="all-notes-search" placeholder="Search in all notes..." value="">
+        <div class="page-list" id="all-notes-list" style="max-height:calc(100vh - 280px);overflow-y:auto"></div>
+        <div class="auto-scroll-bar">
+          <button class="btn-icon" id="auto-scroll-toggle">▶️</button>
+          <span>Auto-Scroll</span>
+          <input type="range" id="scroll-speed" min="0.5" max="30" step="0.5" value="${allNotesUI.scrollSpeed}">
+          <span id="speed-label">${allNotesUI.scrollSpeed}x</span>
+        </div>
+      </div>
+    `;
+
+    const searchInput = $('#all-notes-search');
+    searchInput.value = allNotesUI.searchQ;
+    searchInput.addEventListener('input', (e) => {
+      allNotesUI.searchQ = e.target.value;
+      updateList();
+    });
+
+    $('#btn-show-map').addEventListener('click', showMapView);
     $('#auto-scroll-toggle').addEventListener('click', () => {
-      autoScroll = !autoScroll;
-      if (autoScroll) doAutoScroll();
+      allNotesUI.autoScroll = !allNotesUI.autoScroll;
+      $('#auto-scroll-toggle').textContent = allNotesUI.autoScroll ? '⏸️' : '▶️';
+      if (allNotesUI.autoScroll) doAutoScroll();
       else cancelAnimationFrame(allNotesScrollRAF);
-      render();
     });
     $('#scroll-speed').addEventListener('input', (e) => {
-      scrollSpeed = +e.target.value;
-      $('#speed-label').textContent = scrollSpeed + 'x';
+      allNotesUI.scrollSpeed = +e.target.value;
+      $('#speed-label').textContent = allNotesUI.scrollSpeed + 'x';
     });
+
+    allNotesUI.built = true;
   }
 
   function doAutoScroll() {
     const list = $('#all-notes-list');
-    if (list && autoScroll) {
-      list.scrollTop += scrollSpeed;
+    if (list && allNotesUI.autoScroll) {
+      list.scrollTop += allNotesUI.scrollSpeed;
       allNotesScrollRAF = requestAnimationFrame(doAutoScroll);
     }
   }
 
+  if (!allNotesUI.built || !page.querySelector('.all-notes-layout')) {
+    buildShell();
+  } else {
+    $('#all-notes-search').value = allNotesUI.searchQ;
+    $('#auto-scroll-toggle').textContent = allNotesUI.autoScroll ? '⏸️' : '▶️';
+  }
+
+  updateList();
   page.classList.remove('hidden');
-  render();
 }
 
 function showNoteListActions(index) {
