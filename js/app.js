@@ -2071,8 +2071,11 @@ async function generateAI() {
 
     if (data.note) {
       setNote(word, data.note);
-      const msg = data.warnings?.length
-        ? `Note générée (${data.warnings.length} avertissement)`
+      const parts = [];
+      if (data.imageModel) parts.push(data.imageModel);
+      if (data.warnings?.length) parts.push(`${data.warnings.length} avertissement`);
+      const msg = parts.length
+        ? `Note générée (${parts.join(', ')})`
         : 'Génération IA terminée ✨';
       showToast(msg);
       renderNoteView();

@@ -63,51 +63,19 @@ async function urlToDataUri(url) {
 async function generateImage(openaiKey, word) {
   const prompt = IMAGE_PROMPT(word);
 
-  try {
-    const data = await apiFetch('https://api.openai.com/v1/images/generations', openaiKey, {
-      model: 'gpt-image-2',
-      prompt,
-      size: '1024x1024',
-      quality: 'medium',
-      response_format: 'b64_json',
-      n: 1,
-    });
-    const item = data.data?.[0];
-    if (item?.b64_json) return `data:image/png;base64,${item.b64_json}`;
-    if (item?.url) return urlToDataUri(item.url);
-  } catch (e) {
-    console.warn('gpt-image-2 failed:', e.message);
-  }
-
-  // Fallback gpt-image-1
-  try {
-    const data = await apiFetch('https://api.openai.com/v1/images/generations', openaiKey, {
-      model: 'gpt-image-1',
-      prompt,
-      size: '1024x1024',
-      quality: 'low',
-      n: 1,
-    });
-    const item = data.data?.[0];
-    if (item?.b64_json) return `data:image/png;base64,${item.b64_json}`;
-    if (item?.url) return urlToDataUri(item.url);
-  } catch (e) {
-    console.warn('gpt-image-1 failed:', e.message);
-  }
-
-  // Fallback DALL-E 2 (supporte b64_json)
   const data = await apiFetch('https://api.openai.com/v1/images/generations', openaiKey, {
-    model: 'dall-e-2',
+    model: 'gpt-image-2',
     prompt,
     size: '1024x1024',
+    quality: 'medium',
     response_format: 'b64_json',
     n: 1,
   });
-  const b64 = data.data?.[0]?.b64_json;
-  if (b64) return `data:image/png;base64,${b64}`;
-  const url = data.data?.[0]?.url;
-  if (url) return urlToDataUri(url);
-  return null;
+
+  const item = data.data?.[0];
+  if (item?.b64_json) return `data:image/png;base64,${item.b64_json}`;
+  if (item?.url) return urlToDataUri(item.url);
+  throw new Error('gpt-image-2: aucune image retournée par l\'API');
 }
 
 async function generateNote(deepseekKey, openaiKey, word) {
@@ -131,7 +99,7 @@ async function generateNote(deepseekKey, openaiKey, word) {
   if (image) note += image;
   if (text) note += (note ? '\n\n' : '') + text;
 
-  return { note, text, image, warnings: errors };
+  return { note, text, image, imageModel: image ? 'gpt-image-2' : null, warnings: errors };
 }
 
 module.exports = { generateNote };
