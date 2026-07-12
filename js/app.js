@@ -1004,10 +1004,24 @@ function renderNoteView() {
       el.addEventListener('click', () => window.open(el.dataset.url, '_blank'));
     });
   } else {
-    body.innerHTML = `<textarea class="note-editor" id="note-editor">${escapeHtml(note)}</textarea>${dateFooter}`;
-    $('#note-editor').addEventListener('input', (e) => {
+    body.innerHTML = `
+      <div class="note-editor-wrap">
+        <textarea class="note-editor" id="note-editor">${escapeHtml(note)}</textarea>
+        <div id="wiki-suggestions" class="wiki-suggestions hidden"></div>
+      </div>${dateFooter}`;
+    const editor = $('#note-editor');
+    editor.addEventListener('input', (e) => {
       setNote(pos.word, e.target.value);
+      updateWikiSuggestions(editor);
     });
+    editor.addEventListener('keyup', (e) => {
+      if (['ArrowDown', 'ArrowUp', 'Enter', 'Escape', 'Tab'].includes(e.key)) {
+        handleWikiSuggestionKeys(e, editor);
+      } else {
+        updateWikiSuggestions(editor);
+      }
+    });
+    editor.addEventListener('click', () => updateWikiSuggestions(editor));
   }
 
   startNoteTimer();
@@ -1666,6 +1680,140 @@ function pickImage() {
   input.click();
 }
 
+function getAllMindmapWords() {
+  return [...new Set(state.positions.map((p) => p.word))];
+}
+
+function getWikiAutocompleteContext(text, cursor) {
+  const before = text.substring(0, cursor);
+
+  const bracketMatch = before.match(/\[\[([^\]]*)$/);
+  if (bracketMatch) {
+    return {
+      mode: 'bracket',
+      query: bracketMatch[1],
+      replaceStart: before.length - bracketMatch[0].length,
+      replaceEnd: cursor,
+    };
+  }
+
+  const wordMatch = before.match(/(?:^|[\s\n])([^\s\[\]]+)$/);
+  if (wordMatch && wordMatch[1].length >= 1) {
+    return {
+      mode: 'word',
+      query: wordMatch[1],
+      replaceStart: cursor - wordMatch[1].length,
+      replaceEnd: cursor,
+    };
+  }
+
+  return null;
+}
+
+function filterWikiSuggestions(query) {
+  const q = query.toLowerCase();
+  return getAllMindmapWords()
+    .filter((w) => w.toLowerCase().includes(q))
+    .sort((a, b) => {
+      const aLow = a.toLowerCase();
+      const bLow = b.toLowerCase();
+      const aStarts = aLow.startsWith(q);
+      const bStarts = bLow.startsWith(q);
+      if (aStarts !== bStarts) return aStarts ? -1 : 1;
+      return a.localeCompare(b);
+    })
+    .slice(0, 8);
+}
+
+let wikiSuggestionIndex = 0;
+
+function updateWikiSuggestions(editor) {
+  const box = $('#wiki-suggestions');
+  if (!editor || !box) return;
+
+  const ctx = getWikiAutocompleteContext(editor.value, editor.selectionStart);
+  if (!ctx || !ctx.query) {
+    box.classList.add('hidden');
+    box.innerHTML = '';
+    wikiSuggestionIndex = 0;
+    return;
+  }
+
+  const matches = filterWikiSuggestions(ctx.query);
+  if (!matches.length) {
+    box.classList.add('hidden');
+    box.innerHTML = '';
+    wikiSuggestionIndex = 0;
+    return;
+  }
+
+  wikiSuggestionIndex = Math.min(wikiSuggestionIndex, matches.length - 1);
+  box.classList.remove('hidden');
+  box.innerHTML = matches.map((word, i) => `
+    <button type="button" class="wiki-suggestion-item${i === wikiSuggestionIndex ? ' active' : ''}" data-word="${escapeHtml(word)}">
+      🔗 ${escapeHtml(word)}
+    </button>
+  `).join('');
+
+  box.querySelectorAll('.wiki-suggestion-item').forEach((btn, i) => {
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      applyWikiSuggestion(editor, btn.dataset.word);
+    });
+    btn.addEventListener('mouseenter', () => {
+      wikiSuggestionIndex = i;
+      box.querySelectorAll('.wiki-suggestion-item').forEach((el, j) => {
+        el.classList.toggle('active', j === i);
+      });
+    });
+  });
+}
+
+function applyWikiSuggestion(editor, word) {
+  const ctx = getWikiAutocompleteContext(editor.value, editor.selectionStart);
+  if (!ctx || !word) return;
+
+  const text = editor.value;
+  const replacement = `[[${word}]]`;
+  const newText = text.substring(0, ctx.replaceStart) + replacement + text.substring(ctx.replaceEnd);
+  const newCursor = ctx.replaceStart + replacement.length;
+
+  editor.value = newText;
+  editor.selectionStart = editor.selectionEnd = newCursor;
+  const noteWord = state.positions[state.editingIndex]?.word;
+  if (noteWord) setNote(noteWord, newText);
+  $('#wiki-suggestions')?.classList.add('hidden');
+  editor.focus();
+}
+
+function handleWikiSuggestionKeys(e, editor) {
+  const box = $('#wiki-suggestions');
+  if (!box || box.classList.contains('hidden')) return;
+
+  const items = [...box.querySelectorAll('.wiki-suggestion-item')];
+  if (!items.length) return;
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    wikiSuggestionIndex = (wikiSuggestionIndex + 1) % items.length;
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    wikiSuggestionIndex = (wikiSuggestionIndex - 1 + items.length) % items.length;
+  } else if (e.key === 'Enter' || e.key === 'Tab') {
+    e.preventDefault();
+    const word = items[wikiSuggestionIndex]?.dataset.word;
+    if (word) applyWikiSuggestion(editor, word);
+    return;
+  } else if (e.key === 'Escape') {
+    box.classList.add('hidden');
+    return;
+  } else {
+    return;
+  }
+
+  items.forEach((el, i) => el.classList.toggle('active', i === wikiSuggestionIndex));
+}
+
 function insertWikilink() {
   state.isReadingMode = false;
   renderNoteView();
@@ -1681,6 +1829,7 @@ function insertWikilink() {
   setNote(word, editor.value);
   editor.focus();
   editor.selectionStart = editor.selectionEnd = start + (selected ? selected.length + 4 : 2);
+  updateWikiSuggestions(editor);
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
