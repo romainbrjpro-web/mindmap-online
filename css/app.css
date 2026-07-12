@@ -746,14 +746,26 @@ body.note-view #mindmap-canvas,
 body.note-view .search-bar,
 body.note-view .zoom-indicator,
 body.note-view .help-text,
-body.note-view .action-buttons {
+body.note-view .action-buttons,
+body.folder-tab #mindmap-canvas,
+body.folder-tab .search-bar,
+body.folder-tab .zoom-indicator,
+body.folder-tab .help-text,
+body.folder-tab .action-buttons {
   visibility: hidden;
   pointer-events: none;
 }
 
 body.note-tab,
-body.note-view {
+body.note-view,
+body.folder-tab {
   background: var(--bg);
+}
+
+/* Croix rouge de fermeture d'un dossier ouvert dans son onglet */
+.btn-folder-close {
+  color: #ff4d4f;
+  font-size: 18px;
 }
 
 .note-loading {

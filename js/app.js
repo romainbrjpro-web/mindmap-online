@@ -91,6 +91,22 @@ function isDedicatedNoteTab() {
   return new URLSearchParams(location.search).has('note');
 }
 
+function folderUrl(folderId) {
+  const url = new URL(location.href);
+  url.search = '';
+  url.searchParams.set('folder', folderId);
+  return url.toString();
+}
+
+function openFolderInNewTab(folderId) {
+  if (!folderId) return;
+  window.open(folderUrl(folderId), '_blank');
+}
+
+function isDedicatedFolderTab() {
+  return new URLSearchParams(location.search).has('folder');
+}
+
 function openNoteFromUrl() {
   const params = new URLSearchParams(location.search);
   const noteWord = params.get('note')?.trim();
@@ -119,6 +135,42 @@ function returnToAllNotes() {
   document.body.classList.remove('note-view', 'note-tab');
   document.body.classList.add('home-view');
   document.body.classList.remove('map-view');
+  openAllNotesPage();
+}
+
+function openFolderFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const folderId = params.get('folder')?.trim();
+  if (!folderId) return false;
+
+  document.body.classList.add('folder-tab');
+  document.body.classList.remove('map-view');
+  allNotesUI.currentFolderId = folderId;
+  allNotesUI.searchQ = '';
+  const folder = getFolderById(folderId);
+  document.title = folder ? folder.name : 'Dossier';
+  openAllNotesPage();
+  return true;
+}
+
+// Ferme la vue dossier avec le même comportement que la croix des notes.
+async function closeFolder() {
+  const dedicatedTab = isDedicatedFolderTab();
+  allNotesUI.currentFolderId = null;
+  document.body.classList.remove('folder-tab');
+
+  if (dedicatedTab) {
+    try {
+      if (window.opener && !window.opener.closed) window.opener.focus();
+    } catch (_) { /* ignore */ }
+    window.close();
+    setTimeout(() => {
+      if (document.hidden) return;
+      history.replaceState({ view: 'all-notes' }, '', location.pathname);
+      openAllNotesPage();
+    }, 150);
+    return;
+  }
   openAllNotesPage();
 }
 
@@ -1911,19 +1963,28 @@ function openAllNotesPage() {
     const title = $('#all-notes-title');
     if (!el || !title) return;
 
+    const folderTab = isDedicatedFolderTab();
     const folder = allNotesUI.currentFolderId ? getFolderById(allNotesUI.currentFolderId) : null;
-    if (folder) {
-      title.textContent = folder.name;
+    if (folder || (folderTab && allNotesUI.currentFolderId)) {
+      const name = folder ? folder.name : 'Dossier';
+      title.textContent = name;
       el.classList.remove('hidden');
+      const closeBtn = folderTab
+        ? `<button type="button" class="btn-icon btn-folder-close" id="btn-folder-close" title="Fermer">❌</button>`
+        : `<button type="button" class="btn-icon" id="btn-folder-back" title="Retour">←</button>`;
       el.innerHTML = `
-        <button type="button" class="btn-icon" id="btn-folder-back" title="Retour">←</button>
-        <span class="drop-root-zone drop-root-label">📁 ${escapeHtml(folder.name)} — glisser ici pour retirer</span>
+        ${closeBtn}
+        <span class="drop-root-zone drop-root-label">📁 ${escapeHtml(name)} — glisser ici pour retirer</span>
       `;
-      $('#btn-folder-back')?.addEventListener('click', () => {
-        allNotesUI.currentFolderId = null;
-        updateBreadcrumb();
-        updateList();
-      });
+      if (folderTab) {
+        $('#btn-folder-close')?.addEventListener('click', () => closeFolder());
+      } else {
+        $('#btn-folder-back')?.addEventListener('click', () => {
+          allNotesUI.currentFolderId = null;
+          updateBreadcrumb();
+          updateList();
+        });
+      }
     } else {
       title.textContent = 'All Notes';
       el.classList.add('hidden');
@@ -1940,12 +2001,7 @@ function openAllNotesPage() {
     });
     page.querySelectorAll('.list-item[data-folder-id]').forEach((item) => {
       item.addEventListener('click', () => {
-        allNotesUI.currentFolderId = item.dataset.folderId;
-        allNotesUI.searchQ = '';
-        const searchInput = $('#all-notes-search');
-        if (searchInput) searchInput.value = '';
-        updateBreadcrumb();
-        updateList();
+        openFolderInNewTab(item.dataset.folderId);
       });
       item.addEventListener('contextmenu', (e) => {
         e.preventDefault();
@@ -2835,6 +2891,7 @@ function insertWikilink() {
 
 window.App = {
   closeNote,
+  closeFolder,
   toggleMode: () => { state.isReadingMode = !state.isReadingMode; renderNoteView(); },
   speakTitle: () => speak(state.positions[state.editingIndex]?.word),
   speakNote: () => speak(getNote(state.positions[state.editingIndex]?.word)),
@@ -3127,8 +3184,11 @@ async function syncInBackground() {
 }
 
 async function bootstrap() {
-  const isNoteTab = new URLSearchParams(location.search).has('note');
+  const params = new URLSearchParams(location.search);
+  const isNoteTab = params.has('note');
+  const isFolderTab = params.has('folder');
   if (isNoteTab) showNoteLoadingShell();
+  if (isFolderTab) document.body.classList.add('folder-tab');
 
   load();
   startApp();
@@ -3146,7 +3206,7 @@ async function bootstrap() {
     syncInBackground();
   }
 
-  if (!openNoteFromUrl()) {
+  if (!openNoteFromUrl() && !openFolderFromUrl()) {
     openAllNotesPage();
   }
 }
@@ -3162,6 +3222,7 @@ document.addEventListener('keydown', (e) => {
     if (!$('#image-lightbox')?.classList.contains('hidden')) closeImageLightbox();
     else if (!$('#modal-overlay').classList.contains('hidden')) hideModal();
     else if (state.editingIndex !== -1) closeNote();
+    else if (isDedicatedFolderTab()) closeFolder();
     else {
       $$('.page-overlay').forEach(p => p.classList.add('hidden'));
     }
