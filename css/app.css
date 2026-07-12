@@ -736,6 +736,35 @@ body.home-view .help-text {
   pointer-events: none;
 }
 
+/* Note view — hide mind map chrome while a note is open or loading */
+body.note-tab #mindmap-canvas,
+body.note-tab .search-bar,
+body.note-tab .zoom-indicator,
+body.note-tab .help-text,
+body.note-tab .action-buttons,
+body.note-view #mindmap-canvas,
+body.note-view .search-bar,
+body.note-view .zoom-indicator,
+body.note-view .help-text,
+body.note-view .action-buttons {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+body.note-tab,
+body.note-view {
+  background: var(--bg);
+}
+
+.note-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  opacity: 0.6;
+  font-size: 16px;
+}
+
 /* Diaporama */
 .diaporama-controls {
   position: fixed;

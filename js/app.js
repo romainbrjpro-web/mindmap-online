@@ -92,6 +92,7 @@ function openNoteFromUrl() {
 }
 
 function returnToAllNotes() {
+  document.body.classList.remove('note-view', 'note-tab');
   document.body.classList.add('home-view');
   document.body.classList.remove('map-view');
   openAllNotesPage();
@@ -1121,11 +1122,26 @@ $('#btn-backup').addEventListener('click', openBackupPage);
 
 // ─── Note View ───────────────────────────────────────────────────────────────
 
+function showNoteLoadingShell() {
+  document.body.classList.add('note-tab');
+  document.body.classList.remove('home-view', 'map-view', 'note-view');
+  const page = $('#page-note');
+  if (!page) return;
+  page.innerHTML = '<div class="note-view note-loading">Chargement de la note…</div>';
+  page.classList.remove('hidden');
+}
+
 function openNote(index, { newTab = false, edit = false } = {}) {
   if (newTab) {
     openNoteInNewTab(index, edit);
     return;
   }
+
+  $$('.page-overlay').forEach((overlay) => {
+    if (overlay.id !== 'page-note') overlay.classList.add('hidden');
+  });
+  document.body.classList.remove('home-view', 'map-view');
+  document.body.classList.add('note-view');
 
   state.editingIndex = index;
   if (edit) state.isReadingMode = false;
@@ -2283,26 +2299,34 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+async function syncBeforeClose() {
+  if (!Sync.isServerMode()) {
+    save();
+    return;
+  }
+  const serverData = await Sync.fetchData();
+  state.notes = mergeNotesKeepLonger(serverData.notes, state.notes);
+  state.positions = mergePositions(serverData.positions, state.positions);
+  persistLocal(new Date().toISOString());
+  await Sync.pushData(getSyncPayload());
+}
+
 async function closeNote() {
   state.editingIndex = -1;
   clearInterval(timerInterval);
 
-  if (Sync.isServerMode()) {
-    try {
-      const serverData = await Sync.fetchData();
-      state.notes = mergeNotesKeepLonger(serverData.notes, state.notes);
-      state.positions = mergePositions(serverData.positions, state.positions);
-      persistLocal(new Date().toISOString());
-      await Sync.pushData(getSyncPayload());
-    } catch (e) {
-      console.error('Save before close:', e);
-      Sync.flushSync(getSyncPayload);
-    }
-  } else {
-    save();
-  }
+  document.body.classList.remove('note-view');
+  $('#page-note').classList.add('hidden');
+  document.title = DEFAULT_TITLE;
 
-  if (isDedicatedNoteTab()) {
+  const dedicatedTab = isDedicatedNoteTab();
+  const syncPromise = syncBeforeClose().catch((e) => {
+    console.error('Save before close:', e);
+    if (Sync.isServerMode()) Sync.flushSync(getSyncPayload);
+  });
+
+  if (dedicatedTab) {
+    returnToAllNotes();
     try {
       if (window.opener && !window.opener.closed) {
         window.opener.focus();
@@ -2311,17 +2335,14 @@ async function closeNote() {
     window.close();
     setTimeout(() => {
       if (document.hidden) return;
-      $('#page-note').classList.add('hidden');
-      document.title = DEFAULT_TITLE;
       history.replaceState({ view: 'all-notes' }, '', location.pathname);
-      returnToAllNotes();
     }, 150);
+    await syncPromise;
     return;
   }
 
-  $('#page-note').classList.add('hidden');
-  document.title = DEFAULT_TITLE;
   returnToAllNotes();
+  await syncPromise;
 }
 
 function pickImage() {
@@ -2765,6 +2786,9 @@ function startApp() {
 }
 
 async function bootstrap() {
+  const isNoteTab = new URLSearchParams(location.search).has('note');
+  if (isNoteTab) showNoteLoadingShell();
+
   if (Sync.isServerMode()) {
     try {
       await loadFromServer();

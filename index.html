@@ -6,9 +6,14 @@
   <title>MindMap & Notes Sync</title>
   <link rel="icon" href="assets/logo-mindmap.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="assets/logo-mindmap.svg">
-  <link rel="stylesheet" href="css/app.css?v=16">
+  <link rel="stylesheet" href="css/app.css?v=17">
 </head>
 <body class="dark">
+  <script>
+    if (new URLSearchParams(location.search).has('note')) {
+      document.body.classList.add('note-tab');
+    }
+  </script>
   <div id="app">
     <!-- Mind Map Canvas -->
     <canvas id="mindmap-canvas"></canvas>
@@ -92,6 +97,6 @@
   </div>
 
   <script src="js/sync.js?v=16"></script>
-  <script src="js/app.js?v=24"></script>
+  <script src="js/app.js?v=25"></script>
 </body>
 </html>
