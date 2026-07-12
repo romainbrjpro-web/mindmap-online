@@ -5,6 +5,14 @@
 const SAVE_INTERVAL_MS = 15 * 60 * 1000; // sauvegarde automatique toutes les 15 min
 const POLL_INTERVAL_MS = 8000; // vérification des mises à jour distantes
 
+function parseSettings(settings) {
+  if (!settings) return {};
+  if (typeof settings === 'string') {
+    try { return JSON.parse(settings); } catch { return {}; }
+  }
+  return settings;
+}
+
 function mergeNotesKeepLonger(...sources) {
   const merged = {};
   sources.forEach((notes) => {
@@ -30,12 +38,100 @@ function mergePositions(...sources) {
   return Array.from(byKey.values());
 }
 
+function mergeFolders(...sources) {
+  const byId = new Map();
+  sources.forEach((folders) => {
+    (folders || []).forEach((folder) => {
+      if (!folder?.id) return;
+      const existing = byId.get(folder.id);
+      if (!existing) {
+        byId.set(folder.id, { ...folder });
+        return;
+      }
+      byId.set(folder.id, {
+        id: folder.id,
+        name: (folder.name?.length || 0) >= (existing.name?.length || 0) ? folder.name : existing.name,
+        createdAt: existing.createdAt || folder.createdAt,
+      });
+    });
+  });
+  return Array.from(byId.values()).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+}
+
+function mergeNoteFolders(...sources) {
+  const merged = {};
+  sources.forEach((noteFolders) => {
+    Object.entries(noteFolders || {}).forEach(([key, folderId]) => {
+      if (folderId) merged[key.toLowerCase()] = folderId;
+    });
+  });
+  return merged;
+}
+
+function mergeNoteDates(...sources) {
+  const merged = {};
+  sources.forEach((noteDates) => {
+    Object.entries(noteDates || {}).forEach(([key, date]) => {
+      const k = key.toLowerCase();
+      if (!merged[k] || Date.parse(date) < Date.parse(merged[k])) {
+        merged[k] = date;
+      }
+    });
+  });
+  return merged;
+}
+
+function mergeDiaporamaList(...sources) {
+  const seen = new Set();
+  const list = [];
+  sources.forEach((items) => {
+    (items || []).forEach((word) => {
+      const k = word.toLowerCase();
+      if (!seen.has(k)) {
+        seen.add(k);
+        list.push(word);
+      }
+    });
+  });
+  return list;
+}
+
+function mergeHistory(...sources) {
+  const seen = new Set();
+  const merged = [];
+  sources.forEach((history) => {
+    (history || []).forEach((entry) => {
+      if (!entry?.word) return;
+      const key = `${entry.word}|${entry.timestamp}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(entry);
+      }
+    });
+  });
+  return merged.sort((a, b) => b.timestamp - a.timestamp).slice(0, 100);
+}
+
+function mergeSettings(...sources) {
+  const parsed = sources.map(parseSettings).filter((s) => s && typeof s === 'object');
+  if (!parsed.length) return {};
+
+  const merged = { ...parsed[parsed.length - 1] };
+  merged.folders = mergeFolders(...parsed.map((s) => s.folders));
+  merged.noteFolders = mergeNoteFolders(...parsed.map((s) => s.noteFolders));
+  merged.noteDates = mergeNoteDates(...parsed.map((s) => s.noteDates));
+  merged.diaporamaList = mergeDiaporamaList(...parsed.map((s) => s.diaporamaList));
+  return merged;
+}
+
 function mergePayloadWithSnapshot(payload, snapshot) {
   if (!snapshot) return payload;
   return {
     ...payload,
     positions: mergePositions(snapshot.positions, payload.positions),
     notes: mergeNotesKeepLonger(snapshot.notes, payload.notes),
+    history: mergeHistory(snapshot.history, payload.history),
+    settings: mergeSettings(snapshot.settings, payload.settings),
   };
 }
 
@@ -103,6 +199,13 @@ const Sync = {
   },
 
   async pushData(payload, options = {}) {
+    if (!options.skipMerge) {
+      try {
+        await this.fetchData();
+      } catch {
+        /* use cached snapshot if refresh fails */
+      }
+    }
     let safePayload = payload;
     if (!options.skipMerge) {
       safePayload = mergePayloadWithSnapshot(payload, this.lastServerSnapshot);
@@ -239,4 +342,8 @@ if (typeof window !== 'undefined') {
   window.Sync = Sync;
   window.mergeNotesKeepLonger = mergeNotesKeepLonger;
   window.mergePositions = mergePositions;
+  window.mergeFolders = mergeFolders;
+  window.mergeNoteFolders = mergeNoteFolders;
+  window.mergeSettings = mergeSettings;
+  window.mergeHistory = mergeHistory;
 }

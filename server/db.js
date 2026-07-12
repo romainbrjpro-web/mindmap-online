@@ -233,16 +233,130 @@ const stmts = {
     return Array.from(byKey.values());
   },
 
+  mergeFolders(...sources) {
+    const byId = new Map();
+    sources.forEach((folders) => {
+      let parsed = folders;
+      if (typeof folders === 'string') {
+        try { parsed = JSON.parse(folders); } catch { parsed = []; }
+      }
+      (parsed || []).forEach((folder) => {
+        if (!folder?.id) return;
+        const existing = byId.get(folder.id);
+        if (!existing) {
+          byId.set(folder.id, { ...folder });
+          return;
+        }
+        byId.set(folder.id, {
+          id: folder.id,
+          name: (folder.name?.length || 0) >= (existing.name?.length || 0) ? folder.name : existing.name,
+          createdAt: existing.createdAt || folder.createdAt,
+        });
+      });
+    });
+    return Array.from(byId.values()).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  },
+
+  mergeNoteFolders(...sources) {
+    const merged = {};
+    sources.forEach((noteFolders) => {
+      let parsed = noteFolders;
+      if (typeof noteFolders === 'string') {
+        try { parsed = JSON.parse(noteFolders); } catch { parsed = {}; }
+      }
+      Object.entries(parsed || {}).forEach(([key, folderId]) => {
+        if (folderId) merged[key.toLowerCase()] = folderId;
+      });
+    });
+    return merged;
+  },
+
+  mergeNoteDates(...sources) {
+    const merged = {};
+    sources.forEach((noteDates) => {
+      let parsed = noteDates;
+      if (typeof noteDates === 'string') {
+        try { parsed = JSON.parse(noteDates); } catch { parsed = {}; }
+      }
+      Object.entries(parsed || {}).forEach(([key, date]) => {
+        const k = key.toLowerCase();
+        if (!merged[k] || Date.parse(date) < Date.parse(merged[k])) {
+          merged[k] = date;
+        }
+      });
+    });
+    return merged;
+  },
+
+  mergeDiaporamaList(...sources) {
+    const seen = new Set();
+    const list = [];
+    sources.forEach((items) => {
+      let parsed = items;
+      if (typeof items === 'string') {
+        try { parsed = JSON.parse(items); } catch { parsed = []; }
+      }
+      (parsed || []).forEach((word) => {
+        const k = word.toLowerCase();
+        if (!seen.has(k)) {
+          seen.add(k);
+          list.push(word);
+        }
+      });
+    });
+    return list;
+  },
+
+  mergeHistory(...sources) {
+    const seen = new Set();
+    const merged = [];
+    sources.forEach((history) => {
+      let parsed = history;
+      if (typeof history === 'string') {
+        try { parsed = JSON.parse(history); } catch { parsed = []; }
+      }
+      (parsed || []).forEach((entry) => {
+        if (!entry?.word) return;
+        const key = `${entry.word}|${entry.timestamp}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          merged.push(entry);
+        }
+      });
+    });
+    return merged.sort((a, b) => b.timestamp - a.timestamp).slice(0, 100);
+  },
+
+  mergeSettings(...sources) {
+    const parsed = sources.map((settings) => {
+      if (!settings) return {};
+      if (typeof settings === 'string') {
+        try { return JSON.parse(settings); } catch { return {}; }
+      }
+      return settings;
+    }).filter((s) => s && typeof s === 'object');
+    if (!parsed.length) return '{}';
+
+    const merged = { ...parsed[parsed.length - 1] };
+    merged.folders = stmts.mergeFolders(...parsed.map((s) => s.folders));
+    merged.noteFolders = stmts.mergeNoteFolders(...parsed.map((s) => s.noteFolders));
+    merged.noteDates = stmts.mergeNoteDates(...parsed.map((s) => s.noteDates));
+    merged.diaporamaList = stmts.mergeDiaporamaList(...parsed.map((s) => s.diaporamaList));
+    return JSON.stringify(merged);
+  },
+
   upsertData(userId, positions, notes, history, settings) {
     const store = loadStore();
     const existing = store.mindmap_data[userId];
     const mergedNotes = stmts.mergeNotesKeepLonger(existing?.notes, notes);
     const mergedPositions = stmts.mergePositions(existing?.positions, positions);
+    const mergedHistory = stmts.mergeHistory(existing?.history, history);
+    const mergedSettings = stmts.mergeSettings(existing?.settings, settings);
     store.mindmap_data[userId] = {
       positions: JSON.stringify(mergedPositions),
       notes: JSON.stringify(mergedNotes),
-      history,
-      settings,
+      history: JSON.stringify(mergedHistory),
+      settings: mergedSettings,
       updated_at: new Date().toISOString(),
     };
     saveStore(store);

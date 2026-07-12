@@ -184,8 +184,9 @@ function preserveLocalApiKeys() {
 }
 
 function save(options = {}) {
-  if (Sync.lastServerSnapshot?.positions) {
+  if (Sync.lastServerSnapshot) {
     state.positions = mergePositions(Sync.lastServerSnapshot.positions, state.positions);
+    applyMergedSettings(Sync.lastServerSnapshot.settings, getSyncPayload().settings);
   }
   pruneOrphanNotes();
   const updatedAt = new Date().toISOString();
@@ -217,6 +218,57 @@ function mergePositions(...sources) {
     });
   });
   return Array.from(byKey.values());
+}
+
+function getSettingsFromStored(data) {
+  if (!data) return {};
+  const s = data.settings || data;
+  return {
+    folders: s.folders || data.folders || [],
+    noteFolders: s.noteFolders || data.noteFolders || {},
+    noteDates: s.noteDates || data.noteDates || {},
+    diaporamaList: s.diaporamaList || data.diaporamaList || [],
+    zoom: s.zoom ?? data.zoom,
+    offsetX: s.offsetX ?? data.offsetX,
+    offsetY: s.offsetY ?? data.offsetY,
+    isDark: s.isDark ?? data.isDark,
+  };
+}
+
+function applyMergedSettings(...settingsSources) {
+  const merged = mergeSettings(...settingsSources);
+  state.folders = merged.folders || [];
+  state.noteFolders = merged.noteFolders || {};
+  state.noteDates = merged.noteDates || {};
+  state.diaporamaList = merged.diaporamaList || [];
+  if (merged.zoom != null) state.zoom = merged.zoom;
+  if (merged.offsetX != null) state.offsetX = merged.offsetX;
+  if (merged.offsetY != null) state.offsetY = merged.offsetY;
+  if (merged.isDark != null) state.isDark = merged.isDark;
+}
+
+function mergeRemoteState(localStored, serverData) {
+  state.notes = mergeNotesKeepLonger(localStored?.notes, serverData?.notes);
+  state.positions = mergePositions(localStored?.positions, serverData?.positions);
+  state.history = mergeHistory(localStored?.history, serverData?.history);
+  applyMergedSettings(getSettingsFromStored(localStored), serverData?.settings || {});
+}
+
+function remoteDataWasEnriched(localStored, serverData) {
+  if (notesWereMerged(localStored?.notes, serverData?.notes)) return true;
+
+  const localSettings = getSettingsFromStored(localStored);
+  const serverSettings = serverData?.settings || {};
+  if (mergeFolders(localSettings.folders, serverSettings.folders).length
+    > (serverSettings.folders?.length || 0)) return true;
+  if (Object.keys(mergeNoteFolders(localSettings.noteFolders, serverSettings.noteFolders)).length
+    > Object.keys(serverSettings.noteFolders || {}).length) return true;
+  if (mergePositions(localStored?.positions, serverData?.positions).length
+    > (serverData?.positions?.length || 0)) return true;
+  if (mergeHistory(localStored?.history, serverData?.history).length
+    > (serverData?.history?.length || 0)) return true;
+
+  return false;
 }
 
 function notesWereMerged(localNotes, incomingNotes) {
@@ -2305,8 +2357,7 @@ async function syncBeforeClose() {
     return;
   }
   const serverData = await Sync.fetchData();
-  state.notes = mergeNotesKeepLonger(serverData.notes, state.notes);
-  state.positions = mergePositions(serverData.positions, state.positions);
+  mergeRemoteState(getLocalStoredData(), serverData);
   persistLocal(new Date().toISOString());
   await Sync.pushData(getSyncPayload());
 }
@@ -2694,26 +2745,45 @@ function getLocalTimestamp(data) {
 
 function applyRemoteData(data) {
   const localStored = getLocalStoredData();
-  const localNotes = localStored?.notes || state.notes;
-  const localPositions = localStored?.positions || state.positions;
   applyData(data);
-  state.notes = mergeNotesKeepLonger(localNotes, state.notes);
-  state.positions = mergePositions(localPositions, state.positions);
+  mergeRemoteState(localStored, data);
   const updatedAt = new Date().toISOString();
   persistLocal(updatedAt);
   Sync.rememberServerData({
     ...data,
     positions: state.positions,
     notes: state.notes,
+    history: state.history,
+    settings: getSyncPayload().settings,
   });
-  if (notesWereMerged(localNotes, data.notes)) {
+  if (remoteDataWasEnriched(localStored, data)) {
     Sync.lastPayload = getSyncPayload();
     Sync.scheduleSync(getSyncPayload, true);
   }
 }
 
 function handleRemoteUpdate(data) {
-  if (state.editingIndex !== -1 || state.isAiGenerating) return;
+  if (state.isAiGenerating) return;
+
+  if (state.editingIndex !== -1) {
+    const localStored = getLocalStoredData();
+    state.notes = mergeNotesKeepLonger(localStored?.notes, data.notes);
+    state.positions = mergePositions(localStored?.positions, data.positions);
+    applyMergedSettings(getSettingsFromStored(localStored), data.settings || {});
+    persistLocal(new Date().toISOString());
+    Sync.rememberServerData({
+      ...data,
+      positions: state.positions,
+      notes: state.notes,
+      history: state.history,
+      settings: getSyncPayload().settings,
+    });
+    if (remoteDataWasEnriched(localStored, data)) {
+      Sync.scheduleSync(getSyncPayload, true);
+    }
+    return;
+  }
+
   applyRemoteData(data);
   render();
   if (document.body.classList.contains('home-view')) {
@@ -2741,8 +2811,7 @@ async function loadFromServer() {
 
   if (serverTime > 0 && localTime > serverTime) {
     applyData(localData);
-    state.notes = mergeNotesKeepLonger(serverData.notes, state.notes);
-    state.positions = mergePositions(serverData.positions, state.positions);
+    mergeRemoteState(localData, serverData);
     await Sync.pushData(getSyncPayload());
     const pushedAt = new Date().toISOString();
     persistLocal(pushedAt);
@@ -2753,15 +2822,16 @@ async function loadFromServer() {
   if (serverTime > 0) {
     const localStored = getLocalStoredData();
     applyData(serverData);
-    state.notes = mergeNotesKeepLonger(localStored?.notes, state.notes);
-    state.positions = mergePositions(localStored?.positions, state.positions);
+    mergeRemoteState(localStored, serverData);
     persistLocal(serverData.updated_at || new Date().toISOString());
     Sync.rememberServerData({
       ...serverData,
       positions: state.positions,
       notes: state.notes,
+      history: state.history,
+      settings: getSyncPayload().settings,
     });
-    if (notesWereMerged(localStored?.notes, serverData.notes)) {
+    if (remoteDataWasEnriched(localStored, serverData)) {
       await Sync.pushData(getSyncPayload());
     }
     return;
