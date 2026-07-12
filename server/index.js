@@ -20,6 +20,13 @@ if (process.env.NODE_ENV === 'production') {
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
+app.use('/api', (_req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  next();
+});
+
 function authMiddleware(req, res, next) {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {

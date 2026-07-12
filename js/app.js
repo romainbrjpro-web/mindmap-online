@@ -2075,39 +2075,76 @@ function openBackupPage() {
   render();
 }
 
-async function loadFromServer() {
+function getLocalStoredData() {
   try {
-    const serverData = await Sync.fetchData();
-
-    // Le serveur est la source de vérité dès qu'il a été synchronisé au moins une fois
-    if (serverData.updated_at) {
-      applyData(serverData);
-      persistLocal(serverData.updated_at);
-      Sync.setServerTimestamp(serverData.updated_at);
-      return;
-    }
-
-    // Premier démarrage : migrer les données locales vers le serveur si elles existent
-    let localData = null;
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) localData = JSON.parse(raw);
-    } catch { /* ignore */ }
-
-    const localHasData =
-      (localData?.positions?.length > 0) || (Object.keys(localData?.notes || {}).length > 0);
-
-    if (localHasData) {
-      applyData(localData);
-      await Sync.pushData(getSyncPayload());
-      persistLocal(new Date().toISOString());
-    } else {
-      initDefaultData();
-    }
-  } catch (e) {
-    load();
-    console.error('Server load failed, using local:', e);
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
   }
+}
+
+function getLocalTimestamp(data) {
+  if (!data) return 0;
+  const ts = data._updatedAt || data.updated_at;
+  return ts ? Date.parse(ts) : 0;
+}
+
+function applyRemoteData(data) {
+  applyData(data);
+  persistLocal(data.updated_at || new Date().toISOString());
+  if (data.updated_at) Sync.setServerTimestamp(data.updated_at);
+}
+
+function handleRemoteUpdate(data) {
+  if (state.editingIndex !== -1 || state.isAiGenerating) return;
+  applyRemoteData(data);
+  render();
+  if (document.body.classList.contains('home-view')) {
+    openAllNotesPage();
+  }
+}
+
+async function loadFromServer() {
+  let serverData = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      serverData = await Sync.fetchData();
+      break;
+    } catch (e) {
+      if (attempt === 2) throw e;
+      await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
+    }
+  }
+
+  const serverTime = serverData.updated_at ? Date.parse(serverData.updated_at) : 0;
+  const localData = getLocalStoredData();
+  const localTime = getLocalTimestamp(localData);
+  const localHasData =
+    (localData?.positions?.length > 0) || (Object.keys(localData?.notes || {}).length > 0);
+
+  if (serverTime > 0 && localTime > serverTime) {
+    applyData(localData);
+    await Sync.pushData(getSyncPayload());
+    const pushedAt = new Date().toISOString();
+    persistLocal(pushedAt);
+    Sync.setServerTimestamp(pushedAt);
+    return;
+  }
+
+  if (serverTime > 0) {
+    applyRemoteData(serverData);
+    return;
+  }
+
+  if (localHasData) {
+    applyData(localData);
+    await Sync.pushData(getSyncPayload());
+    persistLocal(new Date().toISOString());
+    return;
+  }
+
+  initDefaultData();
 }
 
 function startApp() {
@@ -2120,16 +2157,15 @@ function startApp() {
 
 async function bootstrap() {
   if (Sync.isServerMode()) {
-    await loadFromServer();
-    Sync.startPolling((data) => {
-      if (state.editingIndex !== -1 || state.isAiGenerating) return;
-      applyData(data);
-      persistLocal(data.updated_at);
-      render();
-      if (document.body.classList.contains('home-view')) {
-        openAllNotesPage();
-      }
-    });
+    try {
+      await loadFromServer();
+    } catch (e) {
+      console.error('Server load failed, using local cache:', e);
+      load();
+    }
+    Sync.initLifecycle(getSyncPayload, handleRemoteUpdate);
+    Sync.startPolling(handleRemoteUpdate);
+    Sync.startPeriodicSave(getSyncPayload);
   } else {
     load();
   }

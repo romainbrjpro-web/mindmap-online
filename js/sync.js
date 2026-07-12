@@ -2,15 +2,29 @@
  * Server sync — sauvegarde cloud sans connexion
  */
 
+const SAVE_INTERVAL_MS = 15 * 60 * 1000; // sauvegarde automatique toutes les 15 min
+const POLL_INTERVAL_MS = 8000; // vérification des mises à jour distantes
+
 const Sync = {
   syncTimer: null,
   isSyncing: false,
   lastPayload: null,
   lastServerUpdatedAt: 0,
   pollTimer: null,
+  periodicTimer: null,
+  onRemoteUpdate: null,
+  getPayload: null,
 
   get headers() {
-    return { 'Content-Type': 'application/json' };
+    return {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+    };
+  },
+
+  fetchOptions() {
+    return { cache: 'no-store', headers: this.headers };
   },
 
   isServerMode() {
@@ -34,7 +48,7 @@ const Sync = {
   },
 
   async fetchData() {
-    const res = await fetch('/api/data', { headers: this.headers });
+    const res = await fetch(`/api/data?_=${Date.now()}`, this.fetchOptions());
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Erreur chargement');
     return data;
@@ -44,7 +58,7 @@ const Sync = {
     this.lastPayload = payload;
     const res = await fetch('/api/data', {
       method: 'PUT',
-      headers: this.headers,
+      ...this.fetchOptions(),
       body: JSON.stringify(payload),
     });
     const data = await res.json();
@@ -55,6 +69,7 @@ const Sync = {
 
   scheduleSync(getPayload, immediate = false) {
     if (!this.isServerMode()) return;
+    this.getPayload = getPayload;
     clearTimeout(this.syncTimer);
 
     if (immediate) {
@@ -89,7 +104,7 @@ const Sync = {
     this.lastPayload = payload;
     fetch('/api/data', {
       method: 'PUT',
-      headers: this.headers,
+      ...this.fetchOptions(),
       body: JSON.stringify(payload),
       keepalive: true,
     })
@@ -98,28 +113,73 @@ const Sync = {
       .catch((e) => console.error('Flush sync error:', e));
   },
 
+  async pullLatest(force = false) {
+    const data = await this.fetchData();
+    const serverTime = data.updated_at ? Date.parse(data.updated_at) : 0;
+    if (force || serverTime > this.lastServerUpdatedAt) {
+      this.setServerTimestamp(data.updated_at);
+      if (this.onRemoteUpdate) this.onRemoteUpdate(data);
+    }
+    return data;
+  },
+
   startPolling(onRemoteUpdate) {
     if (!this.isServerMode() || this.pollTimer) return;
+    this.onRemoteUpdate = onRemoteUpdate;
     this.pollTimer = setInterval(async () => {
       try {
-        const data = await this.fetchData();
-        const serverTime = data.updated_at ? Date.parse(data.updated_at) : 0;
-        if (serverTime > this.lastServerUpdatedAt) {
-          this.setServerTimestamp(data.updated_at);
-          onRemoteUpdate(data);
-        }
+        await this.pullLatest(false);
       } catch { /* ignore transient errors */ }
-    }, 4000);
+    }, POLL_INTERVAL_MS);
+  },
+
+  startPeriodicSave(getPayload) {
+    if (!this.isServerMode() || this.periodicTimer) return;
+    this.getPayload = getPayload;
+    this.periodicTimer = setInterval(async () => {
+      try {
+        await this.runSync(getPayload);
+        await this.pullLatest(true);
+      } catch (e) {
+        console.error('Periodic sync error:', e);
+      }
+    }, SAVE_INTERVAL_MS);
+  },
+
+  initLifecycle(getPayload, onRemoteUpdate) {
+    if (!this.isServerMode()) return;
+    this.getPayload = getPayload;
+    this.onRemoteUpdate = onRemoteUpdate;
+
+    window.addEventListener('pagehide', () => {
+      if (this.lastPayload) this.flushSync(getPayload);
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        if (this.lastPayload) this.flushSync(getPayload);
+        return;
+      }
+      this.pullLatest(true).catch((e) => console.error('Visibility pull error:', e));
+    });
+
+    window.addEventListener('focus', () => {
+      this.pullLatest(true).catch((e) => console.error('Focus pull error:', e));
+    });
+
+    window.addEventListener('online', () => {
+      this.runSync(getPayload).catch((e) => console.error('Online sync error:', e));
+      this.pullLatest(true).catch((e) => console.error('Online pull error:', e));
+    });
+
+    window.addEventListener('pageshow', (e) => {
+      if (e.persisted) {
+        this.pullLatest(true).catch((err) => console.error('Pageshow pull error:', err));
+      }
+    });
   },
 };
 
 if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', () => {
-    if (Sync.lastPayload) Sync.flushSync(Sync.lastPayload);
-  });
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden' && Sync.lastPayload) {
-      Sync.flushSync(Sync.lastPayload);
-    }
-  });
+  window.Sync = Sync;
 }
