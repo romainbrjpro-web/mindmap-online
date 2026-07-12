@@ -359,6 +359,30 @@ html, body {
   text-align: center;
 }
 
+.all-notes-breadcrumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.folder-item {
+  border: 1px solid rgba(187, 134, 252, 0.25);
+}
+
+.folder-meta {
+  opacity: 0.5;
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.folder-move-btn {
+  text-align: left;
+}
+
 .all-notes-layout .auto-scroll-bar {
   justify-content: center;
 }

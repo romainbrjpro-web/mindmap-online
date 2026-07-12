@@ -33,6 +33,8 @@ const state = {
   searchQuery: '',
   apiKeys: { deepseek: '', openai: '' },
   noteDates: {},      // word (lowercase) -> ISO createdAt
+  folders: [],        // { id, name, createdAt }
+  noteFolders: {},    // word (lowercase) -> folder id
 };
 
 // ─── DOM ─────────────────────────────────────────────────────────────────────
@@ -107,6 +109,8 @@ function getSyncPayload() {
       isDark: state.isDark,
       diaporamaList: state.diaporamaList,
       noteDates: state.noteDates,
+      folders: state.folders,
+      noteFolders: state.noteFolders,
     },
   };
 }
@@ -132,6 +136,8 @@ function applyData(data) {
   state.isDark = s.isDark ?? state.isDark ?? true;
   state.diaporamaList = s.diaporamaList || state.diaporamaList || [];
   state.noteDates = s.noteDates || data.noteDates || {};
+  state.folders = s.folders || data.folders || [];
+  state.noteFolders = s.noteFolders || data.noteFolders || {};
   state.apiKeys = { deepseek: '', openai: '' };
   Object.keys(state.notes).forEach((key) => {
     state.notes[key] = noteToPlain(state.notes[key]);
@@ -150,6 +156,8 @@ function buildLocalData(updatedAt) {
     isDark: state.isDark,
     diaporamaList: state.diaporamaList,
     noteDates: state.noteDates,
+    folders: state.folders,
+    noteFolders: state.noteFolders,
     apiKeys: state.apiKeys,
     _updatedAt: updatedAt || new Date().toISOString(),
   };
@@ -184,6 +192,69 @@ function pruneOrphanNotes() {
   Object.keys(state.noteDates).forEach((key) => {
     if (!words.has(key)) delete state.noteDates[key];
   });
+  Object.keys(state.noteFolders).forEach((key) => {
+    if (!words.has(key)) delete state.noteFolders[key];
+  });
+}
+
+function generateId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function getFolderById(id) {
+  return state.folders.find((f) => f.id === id);
+}
+
+function countNotesInFolder(folderId) {
+  return Object.values(state.noteFolders).filter((fid) => fid === folderId).length;
+}
+
+function createFolder(name) {
+  const folder = { id: generateId(), name: name.trim(), createdAt: new Date().toISOString() };
+  state.folders.push(folder);
+  state.folders.sort((a, b) => a.name.localeCompare(b.name));
+  save();
+  return folder;
+}
+
+function deleteFolder(folderId) {
+  state.folders = state.folders.filter((f) => f.id !== folderId);
+  Object.keys(state.noteFolders).forEach((key) => {
+    if (state.noteFolders[key] === folderId) delete state.noteFolders[key];
+  });
+  save();
+}
+
+function renameFolder(folderId, newName) {
+  const folder = getFolderById(folderId);
+  if (folder) {
+    folder.name = newName.trim();
+    state.folders.sort((a, b) => a.name.localeCompare(b.name));
+    save();
+  }
+}
+
+function getNoteFolderId(word) {
+  return state.noteFolders[word.toLowerCase()] || null;
+}
+
+function setNoteFolder(word, folderId) {
+  const key = word.toLowerCase();
+  if (folderId) {
+    state.noteFolders[key] = folderId;
+  } else {
+    delete state.noteFolders[key];
+  }
+  save();
+}
+
+function renameNoteFolderKey(oldWord, newWord) {
+  const oldKey = oldWord.toLowerCase();
+  const newKey = newWord.toLowerCase();
+  if (state.noteFolders[oldKey]) {
+    state.noteFolders[newKey] = state.noteFolders[oldKey];
+    delete state.noteFolders[oldKey];
+  }
 }
 
 function ensureNoteDate(word) {
@@ -227,6 +298,7 @@ function removeNotesForWords(words) {
     if (!stillUsed) {
       delete state.notes[key];
       delete state.noteDates[key];
+      delete state.noteFolders[key];
     }
   });
 }
@@ -1254,6 +1326,7 @@ const allNotesUI = {
   autoScroll: false,
   scrollSpeed: 1,
   built: false,
+  currentFolderId: null,
 };
 
 function openAllNotesPage() {
@@ -1261,25 +1334,81 @@ function openAllNotesPage() {
   document.body.classList.add('home-view');
   document.body.classList.remove('map-view');
 
+  function getVisibleFolders() {
+    const q = allNotesUI.searchQ.toLowerCase();
+    return state.folders
+      .filter((f) => !q || f.name.toLowerCase().includes(q))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   function getSorted() {
+    const q = allNotesUI.searchQ.toLowerCase();
     return state.positions
       .map((p, i) => ({ ...p, index: i }))
-      .filter((p) => p.word.toLowerCase().includes(allNotesUI.searchQ.toLowerCase()))
+      .filter((p) => p.word.toLowerCase().includes(q))
+      .filter((p) => {
+        if (q) return true;
+        const folderId = getNoteFolderId(p.word);
+        if (allNotesUI.currentFolderId) {
+          return folderId === allNotesUI.currentFolderId;
+        }
+        return !folderId;
+      })
       .sort((a, b) => a.word.localeCompare(b.word));
   }
 
+  function updateBreadcrumb() {
+    const el = $('#all-notes-breadcrumb');
+    const title = $('#all-notes-title');
+    if (!el || !title) return;
+
+    const folder = allNotesUI.currentFolderId ? getFolderById(allNotesUI.currentFolderId) : null;
+    if (folder) {
+      title.textContent = folder.name;
+      el.classList.remove('hidden');
+      el.innerHTML = `
+        <button type="button" class="btn-icon" id="btn-folder-back" title="Retour">←</button>
+        <span>📁 ${escapeHtml(folder.name)}</span>
+      `;
+      $('#btn-folder-back')?.addEventListener('click', () => {
+        allNotesUI.currentFolderId = null;
+        updateBreadcrumb();
+        updateList();
+      });
+    } else {
+      title.textContent = 'All Notes';
+      el.classList.add('hidden');
+      el.innerHTML = '';
+    }
+  }
+
   function bindListItems() {
-    page.querySelectorAll('.list-item[data-index]').forEach(item => {
+    page.querySelectorAll('.list-item[data-index]').forEach((item) => {
       item.addEventListener('click', () => openNote(+item.dataset.index, { newTab: true }));
       item.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         showNoteListActions(+item.dataset.index);
       });
     });
+    page.querySelectorAll('.list-item[data-folder-id]').forEach((item) => {
+      item.addEventListener('click', () => {
+        allNotesUI.currentFolderId = item.dataset.folderId;
+        allNotesUI.searchQ = '';
+        const searchInput = $('#all-notes-search');
+        if (searchInput) searchInput.value = '';
+        updateBreadcrumb();
+        updateList();
+      });
+      item.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        showFolderActions(item.dataset.folderId);
+      });
+    });
   }
 
   function updateList() {
     const sorted = getSorted();
+    const folders = allNotesUI.currentFolderId && !allNotesUI.searchQ ? [] : getVisibleFolders();
     const exactMatch = sorted.some(
       (p) => p.word.toLowerCase() === allNotesUI.searchQ.trim().toLowerCase(),
     );
@@ -1295,6 +1424,9 @@ function openAllNotesPage() {
           const word = allNotesUI.searchQ.trim();
           if (!word) return;
           addWord(word, -state.offsetX, -state.offsetY);
+          if (allNotesUI.currentFolderId) {
+            setNoteFolder(word, allNotesUI.currentFolderId);
+          }
           if (Sync.isServerMode()) {
             try {
               await Sync.pushData(getSyncPayload());
@@ -1320,11 +1452,23 @@ function openAllNotesPage() {
 
     const list = $('#all-notes-list');
     if (list) {
-      list.innerHTML = sorted.map((p) => `
+      const folderHtml = folders.map((f) => {
+        const count = countNotesInFolder(f.id);
+        return `
+          <div class="list-item folder-item" data-folder-id="${escapeHtml(f.id)}">
+            <div style="font-weight:600">📁 ${escapeHtml(f.name)}</div>
+            <div class="folder-meta">${count} note${count !== 1 ? 's' : ''}</div>
+          </div>
+        `;
+      }).join('');
+
+      const notesHtml = sorted.map((p) => `
         <div class="list-item" data-index="${p.index}">
           <div style="font-weight:600">${escapeHtml(p.word)}</div>
         </div>
       `).join('');
+
+      list.innerHTML = folderHtml + notesHtml;
       bindListItems();
     }
   }
@@ -1333,12 +1477,13 @@ function openAllNotesPage() {
     page.innerHTML = `
       <div class="all-notes-layout">
         <div class="page-header page-header-centered">
-          <button class="btn-icon header-side" id="btn-show-map" title="Mind Map">🗺️</button>
-          <h1>All Notes</h1>
-          <div class="header-side"></div>
+          <button type="button" class="btn-icon header-side" id="btn-show-map" title="Mind Map">🗺️</button>
+          <h1 id="all-notes-title">All Notes</h1>
+          <button type="button" class="btn-icon header-side" id="btn-new-folder" title="Nouveau dossier">📁</button>
         </div>
+        <div id="all-notes-breadcrumb" class="all-notes-breadcrumb hidden"></div>
         <input type="text" id="all-notes-search" class="all-notes-search" placeholder="Search in all notes..." value="">
-        <div class="page-list" id="all-notes-list" style="max-height:calc(100vh - 280px);overflow-y:auto"></div>
+        <div class="page-list" id="all-notes-list" style="max-height:calc(100vh - 300px);overflow-y:auto"></div>
         <div class="auto-scroll-bar">
           <button class="btn-icon" id="auto-scroll-toggle">▶️</button>
           <span>Auto-Scroll</span>
@@ -1356,6 +1501,20 @@ function openAllNotesPage() {
     });
 
     $('#btn-show-map').addEventListener('click', showMapView);
+    $('#btn-new-folder').addEventListener('click', () => {
+      showModal('Nouveau dossier', `<input type="text" id="folder-name-input" placeholder="Nom du dossier">`, [
+        { label: 'Annuler', action: 'close' },
+        { label: 'Créer', action: 'ok', class: 'btn-primary', onClick: () => {
+          const name = $('#folder-name-input').value.trim();
+          if (name) {
+            createFolder(name);
+            hideModal();
+            updateList();
+          }
+        }},
+      ]);
+      setTimeout(() => $('#folder-name-input')?.focus(), 50);
+    });
     $('#auto-scroll-toggle').addEventListener('click', () => {
       allNotesUI.autoScroll = !allNotesUI.autoScroll;
       $('#auto-scroll-toggle').textContent = allNotesUI.autoScroll ? '⏸️' : '▶️';
@@ -1385,18 +1544,90 @@ function openAllNotesPage() {
     $('#auto-scroll-toggle').textContent = allNotesUI.autoScroll ? '⏸️' : '▶️';
   }
 
+  updateBreadcrumb();
   updateList();
   page.classList.remove('hidden');
+}
+
+function showFolderActions(folderId) {
+  const folder = getFolderById(folderId);
+  if (!folder) return;
+
+  showModal(`Dossier « ${escapeHtml(folder.name)} »`, `
+    <div class="modal-actions">
+      <button class="btn btn-block btn-primary" id="rename-folder">✏️ Renommer</button>
+      <button class="btn btn-block btn-danger" id="delete-folder">🗑️ Supprimer le dossier</button>
+    </div>
+  `, [{ label: 'Annuler', action: 'close' }]);
+
+  $('#rename-folder').addEventListener('click', () => {
+    hideModal();
+    showModal('Renommer le dossier', `<input type="text" id="rename-folder-input" value="${escapeHtml(folder.name)}">`, [
+      { label: 'Annuler', action: 'close' },
+      { label: 'OK', action: 'ok', class: 'btn-primary', onClick: () => {
+        const name = $('#rename-folder-input').value.trim();
+        if (name) renameFolder(folderId, name);
+        hideModal();
+        openAllNotesPage();
+      }},
+    ]);
+  });
+
+  $('#delete-folder').addEventListener('click', () => {
+    if (allNotesUI.currentFolderId === folderId) {
+      allNotesUI.currentFolderId = null;
+    }
+    deleteFolder(folderId);
+    hideModal();
+    openAllNotesPage();
+  });
+}
+
+function showMoveNoteToFolderModal(word) {
+  const currentFolderId = getNoteFolderId(word);
+  const folderOptions = state.folders
+    .filter((f) => f.id !== currentFolderId)
+    .map((f) => `
+      <button type="button" class="btn btn-block folder-move-btn" data-folder-id="${escapeHtml(f.id)}">
+        📁 ${escapeHtml(f.name)}
+      </button>
+    `).join('');
+
+  showModal(`Déplacer « ${escapeHtml(word)} »`, `
+    <div class="modal-actions">
+      ${folderOptions || '<p style="opacity:0.6;text-align:center">Aucun autre dossier</p>'}
+      ${currentFolderId ? '<button type="button" class="btn btn-block" id="remove-from-folder">↩ Retirer du dossier</button>' : ''}
+    </div>
+  `, [{ label: 'Annuler', action: 'close' }]);
+
+  $$('.folder-move-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setNoteFolder(word, btn.dataset.folderId);
+      hideModal();
+      openAllNotesPage();
+    });
+  });
+  $('#remove-from-folder')?.addEventListener('click', () => {
+    setNoteFolder(word, null);
+    hideModal();
+    openAllNotesPage();
+  });
 }
 
 function showNoteListActions(index) {
   const pos = state.positions[index];
   showModal(`Actions for "${escapeHtml(pos.word)}"`, `
     <div class="modal-actions">
+      <button class="btn btn-block btn-primary" id="move-note-folder">📁 Déplacer vers un dossier</button>
       <button class="btn btn-block btn-primary" id="rename-note">✏️ Rename</button>
       <button class="btn btn-block btn-danger" id="delete-note">🗑️ Delete Note</button>
     </div>
   `, [{ label: 'Cancel', action: 'close' }]);
+
+  $('#move-note-folder').addEventListener('click', () => {
+    hideModal();
+    showMoveNoteToFolderModal(pos.word);
+  });
 
   $('#rename-note').addEventListener('click', () => {
     hideModal();
@@ -1411,6 +1642,7 @@ function showNoteListActions(index) {
           });
           if (oldNote) { setNote(newName, oldNote); delete state.notes[pos.word.toLowerCase()]; }
           renameNoteDate(pos.word, newName);
+          renameNoteFolderKey(pos.word, newName);
           save();
         }
         hideModal();
