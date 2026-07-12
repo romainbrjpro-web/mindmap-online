@@ -1014,6 +1014,11 @@ function renderNoteView() {
       setNote(pos.word, e.target.value);
       updateWikiSuggestions(editor);
     });
+    editor.addEventListener('keydown', (e) => {
+      if (e.key === ' ') {
+        handleSpaceAutoLink(editor, e);
+      }
+    });
     editor.addEventListener('keyup', (e) => {
       if (['ArrowDown', 'ArrowUp', 'Enter', 'Escape', 'Tab'].includes(e.key)) {
         handleWikiSuggestionKeys(e, editor);
@@ -1684,6 +1689,63 @@ function getAllMindmapWords() {
   return [...new Set(state.positions.map((p) => p.word))];
 }
 
+function getWordBeforeCursor(text, cursor) {
+  const before = text.substring(0, cursor);
+  const match = before.match(/(?:^|[\s\n])([^\s\[\]]+)$/);
+  if (!match || !match[1]) return null;
+  return {
+    word: match[1],
+    start: cursor - match[1].length,
+    end: cursor,
+  };
+}
+
+function wordExistsInMap(word) {
+  return state.positions.some((p) => p.word.toLowerCase() === word.toLowerCase());
+}
+
+function getCanonicalWord(word) {
+  const found = state.positions.find((p) => p.word.toLowerCase() === word.toLowerCase());
+  return found ? found.word : word;
+}
+
+function isWordAlreadyWikilinked(text, start, end) {
+  return text.substring(start - 2, start) === '[[' && text.substring(end, end + 2) === ']]';
+}
+
+function handleSpaceAutoLink(editor, e) {
+  const cursor = editor.selectionStart;
+  const text = editor.value;
+  const info = getWordBeforeCursor(text, cursor);
+  if (!info || info.word.length < 1) return false;
+  if (!/[a-zA-ZÀ-ÿ]/.test(info.word)) return false;
+  if (/^https?:\/\//i.test(info.word)) return false;
+  if (/\[\[[^\]]*$/.test(text.substring(0, cursor))) return false;
+  if (isWordAlreadyWikilinked(text, info.start, info.end)) return false;
+
+  const canonical = getCanonicalWord(info.word);
+
+  if (!wordExistsInMap(info.word)) {
+    const anchor = state.positions[state.editingIndex];
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 120 + Math.random() * 80;
+    const x = anchor ? anchor.x + Math.cos(angle) * dist : 0;
+    const y = anchor ? anchor.y + Math.sin(angle) * dist : 0;
+    addWord(canonical, x, y);
+  }
+
+  e.preventDefault();
+  const replacement = `[[${canonical}]] `;
+  const newText = text.substring(0, info.start) + replacement + text.substring(info.end);
+  editor.value = newText;
+  editor.selectionStart = editor.selectionEnd = info.start + replacement.length;
+
+  const noteWord = state.positions[state.editingIndex]?.word;
+  if (noteWord) setNote(noteWord, newText);
+  $('#wiki-suggestions')?.classList.add('hidden');
+  return true;
+}
+
 function getWikiAutocompleteContext(text, cursor) {
   const before = text.substring(0, cursor);
 
@@ -1697,13 +1759,13 @@ function getWikiAutocompleteContext(text, cursor) {
     };
   }
 
-  const wordMatch = before.match(/(?:^|[\s\n])([^\s\[\]]+)$/);
-  if (wordMatch && wordMatch[1].length >= 1) {
+  const wordInfo = getWordBeforeCursor(text, cursor);
+  if (wordInfo && wordInfo.word.length >= 1) {
     return {
       mode: 'word',
-      query: wordMatch[1],
-      replaceStart: cursor - wordMatch[1].length,
-      replaceEnd: cursor,
+      query: wordInfo.word,
+      replaceStart: wordInfo.start,
+      replaceEnd: wordInfo.end,
     };
   }
 
