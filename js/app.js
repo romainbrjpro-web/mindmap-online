@@ -1568,7 +1568,7 @@ function openBackupPage() {
             </div>
             <button class="btn btn-secondary" data-restore-backup="${escapeHtml(b.filename)}">Restaurer</button>
           </div>
-        `).join('') : '<p style="opacity:0.5">Aucune sauvegarde serveur</p>'}
+        `).join('') : `<p style="opacity:0.5;padding:12px">Aucune sauvegarde avec des données.<br><br>Les sauvegardes automatiques sont créées à chaque modification. Si la liste est vide, les données ont peut‑être été perdues lors d'un redémarrage Render (plan gratuit).<br><br>Vérifiez aussi le cache de votre navigateur sur un autre appareil — vos notes peuvent encore y être.</p>`}
       </div>
     `;
 
