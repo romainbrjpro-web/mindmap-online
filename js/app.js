@@ -281,6 +281,9 @@ function save(options = {}) {
   if (Sync.lastServerSnapshot) {
     state.positions = mergePositions(Sync.lastServerSnapshot.positions, state.positions);
     applyMergedSettings(Sync.lastServerSnapshot.settings, getSyncPayload().settings);
+    // Purge les mots supprimés/renommés que l'union avec l'instantané serveur
+    // vient de ressusciter (sinon un renommage ou une suppression est annulé).
+    applyTombstones();
   }
   pruneOrphanNotes();
   const updatedAt = new Date().toISOString();
