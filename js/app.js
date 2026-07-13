@@ -495,8 +495,8 @@ function moveFolder(folderId, newParentId) {
   save();
 }
 
-// Chemin lisible d'un dossier : "Parent / Enfant".
-function getFolderPath(folder) {
+// Segments du chemin d'un dossier, de la racine jusqu'au dossier lui-même.
+function getFolderPathArray(folder) {
   const parts = [];
   const seen = new Set();
   let cur = folder;
@@ -505,7 +505,12 @@ function getFolderPath(folder) {
     parts.unshift(cur.name);
     cur = cur.parentId ? getFolderById(cur.parentId) : null;
   }
-  return parts.join(' / ');
+  return parts;
+}
+
+// Chemin lisible d'un dossier : "Parent / Enfant".
+function getFolderPath(folder) {
+  return getFolderPathArray(folder).join(' / ');
 }
 
 function getNoteFolderId(word) {
@@ -563,6 +568,21 @@ function renderNoteDateFooter(word) {
   const createdAt = getNoteDate(word);
   if (!createdAt) return '';
   return `<p class="note-created-at">Créée le ${formatNoteDate(createdAt)}</p>`;
+}
+
+// Fil d'Ariane de la note : emplacement dans l'arborescence des dossiers.
+function renderNoteBreadcrumb(word) {
+  const segments = ['All Notes'];
+  const folderId = getNoteFolderId(word);
+  if (folderId) {
+    const folder = getFolderById(folderId);
+    if (folder) segments.push(...getFolderPathArray(folder));
+  }
+  segments.push(word);
+  const html = segments
+    .map((s) => `<span class="crumb">${escapeHtml(s)}</span>`)
+    .join('<span class="crumb-sep">›</span>');
+  return `<nav class="note-breadcrumb">${html}</nav>`;
 }
 
 function removeNotesForWords(words) {
@@ -1525,7 +1545,7 @@ function renderNoteView() {
   `;
 
   const body = $('#note-body');
-  const dateFooter = renderNoteDateFooter(pos.word);
+  const dateFooter = renderNoteBreadcrumb(pos.word) + renderNoteDateFooter(pos.word);
   if (state.isReadingMode) {
     body.innerHTML = renderRichNote(note) + dateFooter;
     body.addEventListener('click', (e) => {

@@ -803,6 +803,34 @@ html, body {
   text-align: center;
 }
 
+.note-breadcrumb {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(128, 128, 128, 0.2);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  opacity: 0.6;
+}
+
+.note-breadcrumb .crumb-sep {
+  opacity: 0.5;
+}
+
+.note-breadcrumb .crumb:last-child {
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.note-breadcrumb + .note-created-at {
+  margin-top: 6px;
+  padding-top: 0;
+  border-top: none;
+}
+
 .note-view .page-header {
   flex-direction: column;
   align-items: center;
