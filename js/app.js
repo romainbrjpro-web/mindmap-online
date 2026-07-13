@@ -1811,6 +1811,31 @@ function clearAllNotesDropHighlights() {
   $$('.drop-target-active').forEach((el) => el.classList.remove('drop-target-active'));
 }
 
+// Auto-scroll the notes list while dragging near its top/bottom edge, so
+// off-screen folders remain reachable during a touch drag.
+let dragScrollDir = 0;
+let dragScrollRAF = null;
+function dragScrollStep() {
+  const list = document.querySelector('#all-notes-list');
+  if (!list || dragScrollDir === 0) { dragScrollRAF = null; return; }
+  list.scrollTop += dragScrollDir * 12;
+  dragScrollRAF = requestAnimationFrame(dragScrollStep);
+}
+function updateDragScroll(clientY) {
+  const list = document.querySelector('#all-notes-list');
+  if (!list) { dragScrollDir = 0; return; }
+  const rect = list.getBoundingClientRect();
+  const edge = 64;
+  if (clientY < rect.top + edge) dragScrollDir = -1;
+  else if (clientY > rect.bottom - edge) dragScrollDir = 1;
+  else dragScrollDir = 0;
+  if (dragScrollDir !== 0 && !dragScrollRAF) dragScrollRAF = requestAnimationFrame(dragScrollStep);
+}
+function stopDragScroll() {
+  dragScrollDir = 0;
+  if (dragScrollRAF) { cancelAnimationFrame(dragScrollRAF); dragScrollRAF = null; }
+}
+
 function bindAllNotesDragDrop(updateList) {
   const page = $('#page-all-notes');
   if (!page) return;
@@ -1872,20 +1897,31 @@ function bindAllNotesDragDrop(updateList) {
       if (!item.classList.contains('dragging')) return;
       if (allNotesUI.dragNoteIndex !== +item.dataset.index) return;
       allNotesUI.dragMoved = true;
-      const target = document.elementFromPoint(e.clientX, e.clientY);
+      const point = e.touches?.[0] || e;
+      updateDragScroll(point.clientY);
+      const target = document.elementFromPoint(point.clientX, point.clientY);
       clearAllNotesDropHighlights();
       target?.closest('.folder-item[data-folder-id], .drop-root-zone')
         ?.classList.add('drop-target-active');
     });
 
+    // While an active touch drag is in progress, stop the browser from
+    // treating the vertical move as a scroll (which would fire pointercancel
+    // and drop the note on the wrong target or nowhere).
+    item.addEventListener('touchmove', (e) => {
+      if (item.classList.contains('dragging')) e.preventDefault();
+    }, { passive: false });
+
     const endPointer = (e) => {
       clearTimeout(pressTimer);
       pressTimer = null;
+      stopDragScroll();
       if (!item.classList.contains('dragging') || allNotesUI.dragNoteIndex !== +item.dataset.index) {
         pointerStart = null;
         return;
       }
-      const target = document.elementFromPoint(e.clientX, e.clientY);
+      const point = e.changedTouches?.[0] || e;
+      const target = document.elementFromPoint(point.clientX, point.clientY);
       const folderEl = target?.closest('.folder-item[data-folder-id]');
       const rootEl = target?.closest('.drop-root-zone');
       const word = state.positions[allNotesUI.dragNoteIndex]?.word;
