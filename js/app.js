@@ -428,8 +428,13 @@ function countNotesInFolder(folderId) {
   return Object.values(state.noteFolders).filter((fid) => fid === folderId).length;
 }
 
-function createFolder(name) {
-  const folder = { id: generateId(), name: name.trim(), createdAt: new Date().toISOString() };
+function createFolder(name, parentId = null) {
+  const folder = {
+    id: generateId(),
+    name: name.trim(),
+    parentId: parentId || null,
+    createdAt: new Date().toISOString(),
+  };
   state.folders.push(folder);
   state.folders.sort((a, b) => a.name.localeCompare(b.name));
   state.folderTimes[folder.id] = Date.now();
@@ -438,16 +443,33 @@ function createFolder(name) {
   return folder;
 }
 
+// Renvoie l'id du dossier et de tous ses descendants (sous-dossiers récursifs).
+function getFolderWithDescendants(folderId) {
+  const ids = [folderId];
+  let i = 0;
+  while (i < ids.length) {
+    const current = ids[i++];
+    state.folders.forEach((f) => {
+      if (f.parentId === current && !ids.includes(f.id)) ids.push(f.id);
+    });
+  }
+  return ids;
+}
+
 function deleteFolder(folderId) {
-  state.folders = state.folders.filter((f) => f.id !== folderId);
+  const deadIds = getFolderWithDescendants(folderId);
+  const deadSet = new Set(deadIds);
+  state.folders = state.folders.filter((f) => !deadSet.has(f.id));
   Object.keys(state.noteFolders).forEach((key) => {
-    if (state.noteFolders[key] === folderId) {
+    if (deadSet.has(state.noteFolders[key])) {
       state.noteFolders[key] = null;
       state.noteFolderTimes[key] = Date.now();
     }
   });
-  state.folderDeletions[folderId] = Date.now();
-  delete state.folderTimes[folderId];
+  deadIds.forEach((id) => {
+    state.folderDeletions[id] = Date.now();
+    delete state.folderTimes[id];
+  });
   save();
 }
 
@@ -1835,8 +1857,20 @@ function openAllNotesPage() {
 
   function getVisibleFolders() {
     const q = allNotesUI.searchQ.toLowerCase();
+    if (q) {
+      // Recherche : tous les dossiers correspondants, à plat.
+      return state.folders
+        .filter((f) => f.name.toLowerCase().includes(q))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    }
+    const current = allNotesUI.currentFolderId || null;
+    const exists = (id) => state.folders.some((f) => f.id === id);
     return state.folders
-      .filter((f) => !q || f.name.toLowerCase().includes(q))
+      .filter((f) => {
+        // Parent effectif : la racine si pas de parent ou parent disparu (orphelin).
+        const parent = f.parentId && exists(f.parentId) ? f.parentId : null;
+        return parent === current;
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
@@ -1910,7 +1944,7 @@ function openAllNotesPage() {
 
   function updateList() {
     const sorted = getSorted();
-    const folders = allNotesUI.currentFolderId && !allNotesUI.searchQ ? [] : getVisibleFolders();
+    const folders = getVisibleFolders();
     const exactMatch = sorted.some(
       (p) => p.word.toLowerCase() === allNotesUI.searchQ.trim().toLowerCase(),
     );
@@ -1956,10 +1990,15 @@ function openAllNotesPage() {
     if (list) {
       const folderHtml = folders.map((f) => {
         const count = countNotesInFolder(f.id);
+        const subCount = state.folders.filter((c) => c.parentId === f.id).length;
+        const meta = [
+          subCount ? `${subCount} dossier${subCount !== 1 ? 's' : ''}` : '',
+          `${count} note${count !== 1 ? 's' : ''}`,
+        ].filter(Boolean).join(' · ');
         return `
           <div class="list-item folder-item" data-folder-id="${escapeHtml(f.id)}">
             <span class="folder-name">📁 ${escapeHtml(f.name)}</span>
-            <span class="folder-meta">${count} note${count !== 1 ? 's' : ''}</span>
+            <span class="folder-meta">${meta}</span>
           </div>
         `;
       }).join('');
@@ -2011,12 +2050,15 @@ function openAllNotesPage() {
     });
 
     $('#btn-new-folder').addEventListener('click', () => {
-      showModal('Nouveau dossier', `<input type="text" id="folder-name-input" placeholder="Nom du dossier">`, [
+      const parentId = allNotesUI.currentFolderId || null;
+      const parentFolder = parentId ? getFolderById(parentId) : null;
+      const title = parentFolder ? `Nouveau sous-dossier dans « ${escapeHtml(parentFolder.name)} »` : 'Nouveau dossier';
+      showModal(title, `<input type="text" id="folder-name-input" placeholder="Nom du dossier">`, [
         { label: 'Annuler', action: 'close' },
         { label: 'Créer', action: 'ok', class: 'btn-primary', onClick: () => {
           const name = $('#folder-name-input').value.trim();
           if (name) {
-            createFolder(name);
+            createFolder(name, parentId);
             hideModal();
             updateList();
           }
