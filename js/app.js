@@ -46,7 +46,7 @@ const state = {
 // ─── DOM ─────────────────────────────────────────────────────────────────────
 
 const canvas = document.getElementById('mindmap-canvas');
-const ctx = canvas.getContext('2d');
+const ctx = canvas ? canvas.getContext('2d') : null;
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
@@ -752,6 +752,7 @@ function initDefaultData() {
 // ─── Canvas Rendering ────────────────────────────────────────────────────────
 
 function resizeCanvas() {
+  if (!canvas || !ctx) return;
   canvas.width = window.innerWidth * devicePixelRatio;
   canvas.height = window.innerHeight * devicePixelRatio;
   canvas.style.width = window.innerWidth + 'px';
@@ -767,6 +768,7 @@ function getColors() {
 }
 
 function render() {
+  if (!ctx) return;
   const w = window.innerWidth;
   const h = window.innerHeight;
   const colors = getColors();
@@ -1253,157 +1255,23 @@ function onPointerUp(e) {
   canvas.classList.remove('grabbing');
 }
 
-canvas.addEventListener('pointerdown', (e) => {
-  canvas.classList.add('grabbing');
-  canvas.setPointerCapture(e.pointerId);
-  onPointerDown(e);
-});
-canvas.addEventListener('pointermove', onPointerMove);
-canvas.addEventListener('pointerup', onPointerUp);
-canvas.addEventListener('pointercancel', onPointerUp);
+// La mindmap (canvas) a été retirée. Les positions restent le stockage des
+// notes, mais il n'y a plus de rendu ni d'interactions sur un canvas.
 
-canvas.addEventListener('wheel', (e) => {
-  e.preventDefault();
-  const factor = Math.exp(-e.deltaY * 0.0008);
-  state.zoom = Math.max(0.1, Math.min(4, state.zoom * factor));
-  render();
-}, { passive: false });
-
-// Pinch zoom for touch
-let lastPinchDist = 0;
-canvas.addEventListener('touchstart', (e) => {
-  if (e.touches.length === 2) {
-    lastPinchDist = Math.hypot(
-      e.touches[0].clientX - e.touches[1].clientX,
-      e.touches[0].clientY - e.touches[1].clientY
-    );
-  }
-}, { passive: true });
-
-canvas.addEventListener('touchmove', (e) => {
-  if (e.touches.length === 2) {
-    const dist = Math.hypot(
-      e.touches[0].clientX - e.touches[1].clientX,
-      e.touches[0].clientY - e.touches[1].clientY
-    );
-    if (lastPinchDist) {
-      const rawFactor = dist / lastPinchDist;
-      const factor = 1 + (rawFactor - 1) * 0.25;
-      state.zoom = Math.max(0.1, Math.min(4, state.zoom * factor));
-      render();
-    }
-    lastPinchDist = dist;
-  }
-}, { passive: true });
-
-canvas.addEventListener('touchend', () => { lastPinchDist = 0; });
-
-canvas.addEventListener('dblclick', (e) => {
-  const rect = canvas.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
-  if (findWordAt(x, y) === -1) {
-    e.preventDefault();
-    const world = screenToWorld(x, y);
-    showAddWordDialog(world.x, world.y);
-    lastEmptyTap.time = 0;
-  }
-});
-
-// ─── Search ──────────────────────────────────────────────────────────────────
-
-const searchInput = $('#search-input');
-const searchResults = $('#search-results');
-
-searchInput.addEventListener('input', () => {
-  state.searchQuery = searchInput.value;
-  $('#search-clear').classList.toggle('hidden', !searchInput.value);
-
-  if (!searchInput.value.trim()) {
-    searchResults.classList.add('hidden');
-    render();
-    return;
-  }
-
-  const q = searchInput.value.toLowerCase();
-  const matches = state.positions
-    .map((p, i) => ({ ...p, index: i }))
-    .filter(p => p.word.toLowerCase().includes(q))
-    .slice(0, 5);
-
-  if (matches.length) {
-    searchResults.innerHTML = matches.map(p => `
-      <div class="search-result-item" data-index="${p.index}">📄 ${escapeHtml(p.word)}</div>
-    `).join('');
-  } else {
-    searchResults.innerHTML = `
-      <div class="search-result-item create" id="search-create">✨ Create "${escapeHtml(searchInput.value)}"</div>
-    `;
-  }
-
-  searchResults.classList.remove('hidden');
-  render();
-
-  searchResults.querySelectorAll('.search-result-item').forEach(item => {
-    item.addEventListener('click', () => {
-      if (item.id === 'search-create') {
-        addWord(searchInput.value.trim(), -state.offsetX, -state.offsetY);
-      } else {
-        const idx = +item.dataset.index;
-        const pos = state.positions[idx];
-        state.offsetX = -pos.x;
-        state.offsetY = -pos.y;
-        state.zoom = 1.5;
-        state.selected = new Set([idx]);
-      }
-      searchInput.value = '';
-      state.searchQuery = '';
-      searchResults.classList.add('hidden');
-      $('#search-clear').classList.add('hidden');
-      render();
-    });
-  });
-});
-
-$('#search-clear').addEventListener('click', () => {
-  searchInput.value = '';
-  state.searchQuery = '';
-  searchResults.classList.add('hidden');
-  $('#search-clear').classList.add('hidden');
-  render();
-});
-
-// ─── Action Buttons ──────────────────────────────────────────────────────────
-
-$('#btn-lasso').addEventListener('click', () => {
-  state.isSelectionMode = !state.isSelectionMode;
-  canvas.classList.toggle('lasso', state.isSelectionMode);
-  $('#btn-lasso').classList.toggle('active', state.isSelectionMode);
-  if (!state.isSelectionMode) state.selected = new Set();
-  render();
-});
-
-$('#btn-theme').addEventListener('click', () => {
+function toggleTheme() {
   state.isDark = !state.isDark;
   document.body.classList.toggle('light', !state.isDark);
   document.body.classList.toggle('dark', state.isDark);
-  $('#btn-theme').textContent = state.isDark ? '☀️' : '🌙';
+  updateThemeButtonLabel();
   save();
-  render();
-});
+}
 
-$('#btn-history').addEventListener('click', openHistoryPage);
-$('#btn-diaporama').addEventListener('click', openDiaporamaPage);
-$('#btn-all-notes').addEventListener('click', () => {
-  if (document.body.classList.contains('home-view')) {
-    showMapView();
-  } else {
-    openAllNotesPage();
-  }
-});
-$('#btn-export').addEventListener('click', exportData);
-$('#btn-settings').addEventListener('click', openSettingsPage);
-$('#btn-backup').addEventListener('click', openBackupPage);
+function updateThemeButtonLabel() {
+  const label = state.isDark ? '☀️' : '🌙';
+  document.querySelectorAll('.js-theme-toggle').forEach((btn) => {
+    btn.textContent = label;
+  });
+}
 
 // ─── Note View ───────────────────────────────────────────────────────────────
 
@@ -1790,14 +1658,6 @@ function openHistoryPage() {
 
 // ─── All Notes Page (home) ───────────────────────────────────────────────────
 
-function showMapView() {
-  cancelAnimationFrame(allNotesScrollRAF);
-  $('#page-all-notes').classList.add('hidden');
-  document.body.classList.remove('home-view');
-  document.body.classList.add('map-view');
-  render();
-}
-
 let allNotesScrollRAF = null;
 
 const allNotesUI = {
@@ -2120,9 +1980,16 @@ function openAllNotesPage() {
     page.innerHTML = `
       <div class="all-notes-layout">
         <div class="page-header page-header-centered">
-          <button type="button" class="btn-icon header-side" id="btn-show-map" title="Mind Map">🗺️</button>
           <h1 id="all-notes-title">All Notes</h1>
-          <button type="button" class="btn-icon header-side" id="btn-new-folder" title="Nouveau dossier">📁</button>
+        </div>
+        <div class="all-notes-toolbar">
+          <button type="button" class="btn-icon" id="btn-new-folder" title="Nouveau dossier">📁</button>
+          <button type="button" class="btn-icon" id="btn-diaporama" title="Diaporama">📽️</button>
+          <button type="button" class="btn-icon" id="btn-history" title="Historique">🕒</button>
+          <button type="button" class="btn-icon js-theme-toggle" id="btn-theme" title="Thème">${state.isDark ? '☀️' : '🌙'}</button>
+          <button type="button" class="btn-icon" id="btn-export" title="Exporter">📥</button>
+          <button type="button" class="btn-icon" id="btn-backup" title="Sauvegarde">💾</button>
+          <button type="button" class="btn-icon" id="btn-settings" title="Paramètres API">⚙️</button>
         </div>
         <div id="all-notes-breadcrumb" class="all-notes-breadcrumb hidden"></div>
         <input type="text" id="all-notes-search" class="all-notes-search" placeholder="Search in all notes..." value="">
@@ -2143,7 +2010,6 @@ function openAllNotesPage() {
       updateList();
     });
 
-    $('#btn-show-map').addEventListener('click', showMapView);
     $('#btn-new-folder').addEventListener('click', () => {
       showModal('Nouveau dossier', `<input type="text" id="folder-name-input" placeholder="Nom du dossier">`, [
         { label: 'Annuler', action: 'close' },
@@ -2158,6 +2024,12 @@ function openAllNotesPage() {
       ]);
       setTimeout(() => $('#folder-name-input')?.focus(), 50);
     });
+    $('#btn-diaporama').addEventListener('click', openDiaporamaPage);
+    $('#btn-history').addEventListener('click', openHistoryPage);
+    $('#btn-theme').addEventListener('click', toggleTheme);
+    $('#btn-export').addEventListener('click', exportData);
+    $('#btn-backup').addEventListener('click', openBackupPage);
+    $('#btn-settings').addEventListener('click', openSettingsPage);
     $('#auto-scroll-toggle').addEventListener('click', () => {
       allNotesUI.autoScroll = !allNotesUI.autoScroll;
       $('#auto-scroll-toggle').textContent = allNotesUI.autoScroll ? '⏸️' : '▶️';
@@ -3250,9 +3122,7 @@ async function loadFromServer() {
 function startApp() {
   document.body.classList.toggle('light', !state.isDark);
   document.body.classList.toggle('dark', state.isDark);
-  $('#btn-theme').textContent = state.isDark ? '☀️' : '🌙';
-  resizeCanvas();
-  render();
+  updateThemeButtonLabel();
 }
 
 async function syncInBackground() {

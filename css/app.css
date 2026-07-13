@@ -339,6 +339,29 @@ html, body {
   width: 40px;
 }
 
+.all-notes-toolbar {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.all-notes-toolbar .btn-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.all-notes-toolbar .btn-icon:hover {
+  background: rgba(187, 134, 252, 0.2);
+}
+
 .all-notes-search {
   width: 100%;
   padding: 12px;
