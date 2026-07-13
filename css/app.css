@@ -820,7 +820,24 @@ html, body {
   opacity: 0.5;
 }
 
-.note-breadcrumb .crumb:last-child {
+.note-breadcrumb .crumb-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.note-content.reading .note-breadcrumb .crumb-link {
+  pointer-events: auto;
+}
+
+.note-breadcrumb .crumb-link:hover {
+  opacity: 1;
+  color: var(--accent);
+}
+
+.note-breadcrumb .crumb-current {
   font-weight: 600;
   opacity: 0.85;
 }

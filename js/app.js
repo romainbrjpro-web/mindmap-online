@@ -495,17 +495,22 @@ function moveFolder(folderId, newParentId) {
   save();
 }
 
-// Segments du chemin d'un dossier, de la racine jusqu'au dossier lui-même.
-function getFolderPathArray(folder) {
-  const parts = [];
+// Chaîne de dossiers ancêtres → dossier (avec ids pour le fil d'Ariane).
+function getFolderChain(folder) {
+  const chain = [];
   const seen = new Set();
   let cur = folder;
   while (cur && !seen.has(cur.id)) {
     seen.add(cur.id);
-    parts.unshift(cur.name);
+    chain.unshift(cur);
     cur = cur.parentId ? getFolderById(cur.parentId) : null;
   }
-  return parts;
+  return chain;
+}
+
+// Segments du chemin d'un dossier, de la racine jusqu'au dossier lui-même.
+function getFolderPathArray(folder) {
+  return getFolderChain(folder).map((f) => f.name);
 }
 
 // Chemin lisible d'un dossier : "Parent / Enfant".
@@ -572,16 +577,26 @@ function renderNoteDateFooter(word) {
 
 // Fil d'Ariane de la note : emplacement dans l'arborescence des dossiers.
 function renderNoteBreadcrumb(word) {
-  const segments = ['All Notes'];
+  const rootHref = location.pathname || '/';
+  const crumbs = [{ type: 'root', label: 'All Notes', href: rootHref }];
   const folderId = getNoteFolderId(word);
   if (folderId) {
     const folder = getFolderById(folderId);
-    if (folder) segments.push(...getFolderPathArray(folder));
+    if (folder) {
+      getFolderChain(folder).forEach((f) => {
+        crumbs.push({ type: 'folder', label: f.name, href: folderUrl(f.id) });
+      });
+    }
   }
-  segments.push(word);
-  const html = segments
-    .map((s) => `<span class="crumb">${escapeHtml(s)}</span>`)
-    .join('<span class="crumb-sep">›</span>');
+  crumbs.push({ type: 'note', label: word });
+
+  const html = crumbs.map((c) => {
+    if (c.type === 'note') {
+      return `<span class="crumb crumb-current">${escapeHtml(c.label)}</span>`;
+    }
+    return `<a class="crumb crumb-link" href="${escapeHtml(c.href)}" target="_blank" rel="noopener">${escapeHtml(c.label)}</a>`;
+  }).join('<span class="crumb-sep">›</span>');
+
   return `<nav class="note-breadcrumb">${html}</nav>`;
 }
 
