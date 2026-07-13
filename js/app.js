@@ -483,6 +483,31 @@ function renameFolder(folderId, newName) {
   }
 }
 
+// Déplace un dossier sous un nouveau parent (null = racine), en empêchant
+// de le placer dans lui-même ou l'un de ses descendants (cycle).
+function moveFolder(folderId, newParentId) {
+  const folder = getFolderById(folderId);
+  if (!folder) return;
+  const forbidden = new Set(getFolderWithDescendants(folderId));
+  if (newParentId && forbidden.has(newParentId)) return;
+  folder.parentId = newParentId || null;
+  state.folderTimes[folderId] = Date.now();
+  save();
+}
+
+// Chemin lisible d'un dossier : "Parent / Enfant".
+function getFolderPath(folder) {
+  const parts = [];
+  const seen = new Set();
+  let cur = folder;
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    parts.unshift(cur.name);
+    cur = cur.parentId ? getFolderById(cur.parentId) : null;
+  }
+  return parts.join(' / ');
+}
+
 function getNoteFolderId(word) {
   return state.noteFolders[word.toLowerCase()] || null;
 }
@@ -1696,29 +1721,27 @@ function clearAllNotesDropHighlights() {
   $$('.drop-target-active').forEach((el) => el.classList.remove('drop-target-active'));
 }
 
-// Auto-scroll the notes list while dragging near its top/bottom edge, so
-// off-screen folders remain reachable during a touch drag.
-let dragScrollDir = 0;
-let dragScrollRAF = null;
-function dragScrollStep() {
-  const list = document.querySelector('#all-notes-list');
-  if (!list || dragScrollDir === 0) { dragScrollRAF = null; return; }
-  list.scrollTop += dragScrollDir * 12;
-  dragScrollRAF = requestAnimationFrame(dragScrollStep);
-}
-function updateDragScroll(clientY) {
-  const list = document.querySelector('#all-notes-list');
-  if (!list) { dragScrollDir = 0; return; }
-  const rect = list.getBoundingClientRect();
-  const edge = 64;
-  if (clientY < rect.top + edge) dragScrollDir = -1;
-  else if (clientY > rect.bottom - edge) dragScrollDir = 1;
-  else dragScrollDir = 0;
-  if (dragScrollDir !== 0 && !dragScrollRAF) dragScrollRAF = requestAnimationFrame(dragScrollStep);
-}
-function stopDragScroll() {
-  dragScrollDir = 0;
-  if (dragScrollRAF) { cancelAnimationFrame(dragScrollRAF); dragScrollRAF = null; }
+// Appui long (mobile) ou maintien souris → déclenche `handler` (menu d'actions).
+// Le clic qui suit est neutralisé pour ne pas ouvrir la note/le dossier.
+function attachLongPress(item, handler) {
+  let timer = null;
+  let start = null;
+  let fired = false;
+  const clear = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  item.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    start = { x: e.clientX, y: e.clientY };
+    fired = false;
+    timer = setTimeout(() => { fired = true; handler(); }, 500);
+  });
+  item.addEventListener('pointermove', (e) => {
+    if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 10) clear();
+  });
+  item.addEventListener('pointerup', clear);
+  item.addEventListener('pointercancel', clear);
+  item.addEventListener('click', (e) => {
+    if (fired) { e.preventDefault(); e.stopImmediatePropagation(); fired = false; }
+  }, true);
 }
 
 function bindAllNotesDragDrop(updateList) {
@@ -1726,107 +1749,28 @@ function bindAllNotesDragDrop(updateList) {
   if (!page) return;
 
   page.querySelectorAll('.note-item[data-index]').forEach((item) => {
+    // Desktop : glisser-déposer natif vers un dossier.
     item.setAttribute('draggable', 'true');
-
     item.addEventListener('dragstart', (e) => {
       allNotesUI.dragNoteIndex = +item.dataset.index;
-      allNotesUI.dragMoved = false;
-      if (allNotesUI.autoScroll) {
-        allNotesUI.autoScroll = false;
-        cancelAnimationFrame(allNotesScrollRAF);
-        const toggle = $('#auto-scroll-toggle');
-        if (toggle) toggle.textContent = '▶️';
-      }
       item.classList.add('dragging');
       e.dataTransfer.setData('application/x-mindmap-note', item.dataset.index);
       e.dataTransfer.effectAllowed = 'move';
     });
-
     item.addEventListener('dragend', () => {
       item.classList.remove('dragging');
       clearAllNotesDropHighlights();
       setTimeout(() => { allNotesUI.dragNoteIndex = null; }, 50);
     });
-
-    item.addEventListener('click', (e) => {
-      if (allNotesUI.dragMoved) {
-        allNotesUI.dragMoved = false;
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-      openNote(+item.dataset.index, { newTab: true });
-    });
-
-    let pressTimer = null;
-    let pointerStart = null;
-
-    item.addEventListener('pointerdown', (e) => {
-      if (e.pointerType === 'mouse' && e.button !== 0) return;
-      pointerStart = { x: e.clientX, y: e.clientY };
-      pressTimer = setTimeout(() => {
-        allNotesUI.dragNoteIndex = +item.dataset.index;
-        allNotesUI.dragMoved = false;
-        item.classList.add('dragging');
-        try { item.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
-      }, 350);
-    });
-
-    item.addEventListener('pointermove', (e) => {
-      if (pressTimer && pointerStart) {
-        if (Math.hypot(e.clientX - pointerStart.x, e.clientY - pointerStart.y) > 10) {
-          clearTimeout(pressTimer);
-          pressTimer = null;
-        }
-      }
-      if (!item.classList.contains('dragging')) return;
-      if (allNotesUI.dragNoteIndex !== +item.dataset.index) return;
-      allNotesUI.dragMoved = true;
-      const point = e.touches?.[0] || e;
-      updateDragScroll(point.clientY);
-      const target = document.elementFromPoint(point.clientX, point.clientY);
-      clearAllNotesDropHighlights();
-      target?.closest('.folder-item[data-folder-id], .drop-root-zone')
-        ?.classList.add('drop-target-active');
-    });
-
-    // While an active touch drag is in progress, stop the browser from
-    // treating the vertical move as a scroll (which would fire pointercancel
-    // and drop the note on the wrong target or nowhere).
-    item.addEventListener('touchmove', (e) => {
-      if (item.classList.contains('dragging')) e.preventDefault();
-    }, { passive: false });
-
-    const endPointer = (e) => {
-      clearTimeout(pressTimer);
-      pressTimer = null;
-      stopDragScroll();
-      if (!item.classList.contains('dragging') || allNotesUI.dragNoteIndex !== +item.dataset.index) {
-        pointerStart = null;
-        return;
-      }
-      const point = e.changedTouches?.[0] || e;
-      const target = document.elementFromPoint(point.clientX, point.clientY);
-      const folderEl = target?.closest('.folder-item[data-folder-id]');
-      const rootEl = target?.closest('.drop-root-zone');
-      const word = state.positions[allNotesUI.dragNoteIndex]?.word;
-      if (word) {
-        if (folderEl) setNoteFolder(word, folderEl.dataset.folderId);
-        else if (rootEl) setNoteFolder(word, null);
-        if (folderEl || rootEl) updateList();
-      }
-      item.classList.remove('dragging');
-      clearAllNotesDropHighlights();
-      try { item.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
-      allNotesUI.dragNoteIndex = null;
-      pointerStart = null;
-    };
-
-    item.addEventListener('pointerup', endPointer);
-    item.addEventListener('pointercancel', endPointer);
+    item.addEventListener('click', () => openNote(+item.dataset.index, { newTab: true }));
+    // Appui long → menu d'actions (renommer / déplacer / supprimer).
+    attachLongPress(item, () => showNoteListActions(+item.dataset.index));
   });
 
-  page.querySelectorAll('.folder-item[data-folder-id], .drop-root-zone').forEach((zone) => {
+  page.querySelectorAll('.folder-item[data-folder-id]').forEach((zone) => {
+    // Appui long → menu d'actions du dossier.
+    attachLongPress(zone, () => showFolderActions(zone.dataset.folderId));
+    // Desktop : accepter le dépôt d'une note pour la classer dans ce dossier.
     zone.addEventListener('dragover', (e) => {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
@@ -1842,9 +1786,7 @@ function bindAllNotesDragDrop(updateList) {
       const idx = allNotesUI.dragNoteIndex ?? +e.dataTransfer.getData('application/x-mindmap-note');
       const word = state.positions[idx]?.word;
       if (!word) return;
-      allNotesUI.dragMoved = true;
-      if (zone.classList.contains('drop-root-zone')) setNoteFolder(word, null);
-      else setNoteFolder(word, zone.dataset.folderId);
+      setNoteFolder(word, zone.dataset.folderId);
       updateList();
     });
   });
@@ -1891,23 +1833,17 @@ function openAllNotesPage() {
   }
 
   function updateBreadcrumb() {
-    const el = $('#all-notes-breadcrumb');
+    const action = $('#all-notes-header-action');
     const title = $('#all-notes-title');
-    if (!el || !title) return;
+    if (!action || !title) return;
 
     const folderTab = isDedicatedFolderTab();
     const folder = allNotesUI.currentFolderId ? getFolderById(allNotesUI.currentFolderId) : null;
     if (folder || (folderTab && allNotesUI.currentFolderId)) {
-      const name = folder ? folder.name : 'Dossier';
-      title.textContent = name;
-      el.classList.remove('hidden');
-      const closeBtn = folderTab
-        ? `<button type="button" class="btn-icon btn-folder-close" id="btn-folder-close" title="Fermer">❌</button>`
-        : `<button type="button" class="btn-icon" id="btn-folder-back" title="Retour">←</button>`;
-      el.innerHTML = `
-        ${closeBtn}
-        <span class="drop-root-zone drop-root-label">📁 ${escapeHtml(name)} — glisser ici pour retirer</span>
-      `;
+      title.textContent = folder ? folder.name : 'Dossier';
+      action.innerHTML = folderTab
+        ? `<button type="button" class="btn-icon folder-close-btn" id="btn-folder-close" title="Fermer">❌</button>`
+        : `<button type="button" class="btn-icon folder-close-btn" id="btn-folder-back" title="Retour">←</button>`;
       if (folderTab) {
         $('#btn-folder-close')?.addEventListener('click', () => closeFolder());
       } else {
@@ -1919,8 +1855,7 @@ function openAllNotesPage() {
       }
     } else {
       title.textContent = 'All Notes';
-      el.classList.add('hidden');
-      el.innerHTML = '';
+      action.innerHTML = '';
     }
   }
 
@@ -2019,7 +1954,9 @@ function openAllNotesPage() {
     page.innerHTML = `
       <div class="all-notes-layout">
         <div class="page-header page-header-centered">
+          <span class="header-side"></span>
           <h1 id="all-notes-title">All Notes</h1>
+          <span class="header-side" id="all-notes-header-action"></span>
         </div>
         <div class="all-notes-toolbar">
           <button type="button" class="btn-icon" id="btn-new-folder" title="Nouveau dossier">📁</button>
@@ -2030,15 +1967,8 @@ function openAllNotesPage() {
           <button type="button" class="btn-icon" id="btn-backup" title="Sauvegarde">💾</button>
           <button type="button" class="btn-icon" id="btn-settings" title="Paramètres API">⚙️</button>
         </div>
-        <div id="all-notes-breadcrumb" class="all-notes-breadcrumb hidden"></div>
         <input type="text" id="all-notes-search" class="all-notes-search" placeholder="Search in all notes..." value="">
         <div class="page-list" id="all-notes-list" style="overflow-y:auto"></div>
-        <div class="auto-scroll-bar">
-          <button class="btn-icon" id="auto-scroll-toggle">▶️</button>
-          <span>Auto-Scroll</span>
-          <input type="range" id="scroll-speed" min="0.5" max="30" step="0.5" value="${allNotesUI.scrollSpeed}">
-          <span id="speed-label">${allNotesUI.scrollSpeed}x</span>
-        </div>
       </div>
     `;
 
@@ -2072,33 +2002,14 @@ function openAllNotesPage() {
     $('#btn-export').addEventListener('click', exportData);
     $('#btn-backup').addEventListener('click', openBackupPage);
     $('#btn-settings').addEventListener('click', openSettingsPage);
-    $('#auto-scroll-toggle').addEventListener('click', () => {
-      allNotesUI.autoScroll = !allNotesUI.autoScroll;
-      $('#auto-scroll-toggle').textContent = allNotesUI.autoScroll ? '⏸️' : '▶️';
-      if (allNotesUI.autoScroll) doAutoScroll();
-      else cancelAnimationFrame(allNotesScrollRAF);
-    });
-    $('#scroll-speed').addEventListener('input', (e) => {
-      allNotesUI.scrollSpeed = +e.target.value;
-      $('#speed-label').textContent = allNotesUI.scrollSpeed + 'x';
-    });
 
     allNotesUI.built = true;
-  }
-
-  function doAutoScroll() {
-    const list = $('#all-notes-list');
-    if (list && allNotesUI.autoScroll) {
-      list.scrollTop += allNotesUI.scrollSpeed;
-      allNotesScrollRAF = requestAnimationFrame(doAutoScroll);
-    }
   }
 
   if (!allNotesUI.built || !page.querySelector('.all-notes-layout')) {
     buildShell();
   } else {
     $('#all-notes-search').value = allNotesUI.searchQ;
-    $('#auto-scroll-toggle').textContent = allNotesUI.autoScroll ? '⏸️' : '▶️';
   }
 
   updateBreadcrumb();
@@ -2113,6 +2024,7 @@ function showFolderActions(folderId) {
   showModal(`Dossier « ${escapeHtml(folder.name)} »`, `
     <div class="modal-actions">
       <button class="btn btn-block btn-primary" id="rename-folder">✏️ Renommer</button>
+      <button class="btn btn-block btn-primary" id="move-folder">📁 Déplacer</button>
       <button class="btn btn-block btn-danger" id="delete-folder">🗑️ Supprimer le dossier</button>
     </div>
   `, [{ label: 'Annuler', action: 'close' }]);
@@ -2130,6 +2042,11 @@ function showFolderActions(folderId) {
     ]);
   });
 
+  $('#move-folder').addEventListener('click', () => {
+    hideModal();
+    showMoveFolderModal(folderId);
+  });
+
   $('#delete-folder').addEventListener('click', () => {
     if (allNotesUI.currentFolderId === folderId) {
       allNotesUI.currentFolderId = null;
@@ -2140,13 +2057,48 @@ function showFolderActions(folderId) {
   });
 }
 
+function showMoveFolderModal(folderId) {
+  const folder = getFolderById(folderId);
+  if (!folder) return;
+  const forbidden = new Set(getFolderWithDescendants(folderId));
+  const dests = state.folders
+    .filter((f) => !forbidden.has(f.id) && f.id !== folder.parentId)
+    .sort((a, b) => getFolderPath(a).localeCompare(getFolderPath(b)));
+  const options = dests.map((f) => `
+    <button type="button" class="btn btn-block folder-move-btn" data-folder-id="${escapeHtml(f.id)}">
+      📁 ${escapeHtml(getFolderPath(f))}
+    </button>
+  `).join('');
+
+  showModal(`Déplacer « ${escapeHtml(folder.name)} »`, `
+    <div class="modal-actions">
+      ${folder.parentId ? '<button type="button" class="btn btn-block" id="move-folder-root">↩ Mettre à la racine</button>' : ''}
+      ${options || '<p style="opacity:0.6;text-align:center">Aucune destination disponible</p>'}
+    </div>
+  `, [{ label: 'Annuler', action: 'close' }]);
+
+  $$('.folder-move-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      moveFolder(folderId, btn.dataset.folderId);
+      hideModal();
+      openAllNotesPage();
+    });
+  });
+  $('#move-folder-root')?.addEventListener('click', () => {
+    moveFolder(folderId, null);
+    hideModal();
+    openAllNotesPage();
+  });
+}
+
 function showMoveNoteToFolderModal(word) {
   const currentFolderId = getNoteFolderId(word);
   const folderOptions = state.folders
     .filter((f) => f.id !== currentFolderId)
+    .sort((a, b) => getFolderPath(a).localeCompare(getFolderPath(b)))
     .map((f) => `
       <button type="button" class="btn btn-block folder-move-btn" data-folder-id="${escapeHtml(f.id)}">
-        📁 ${escapeHtml(f.name)}
+        📁 ${escapeHtml(getFolderPath(f))}
       </button>
     `).join('');
 

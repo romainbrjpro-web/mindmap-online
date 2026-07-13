@@ -337,6 +337,17 @@ html, body {
 
 .page-header-centered .header-side {
   width: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#all-notes-header-action {
+  justify-content: flex-end;
+}
+
+.folder-close-btn {
+  font-size: 20px;
 }
 
 .all-notes-toolbar {
