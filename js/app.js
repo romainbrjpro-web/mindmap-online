@@ -2278,17 +2278,28 @@ function showNoteListActions(index) {
       { label: 'Cancel', action: 'close' },
       { label: 'OK', action: 'ok', class: 'btn-primary', onClick: () => {
         const newName = $('#rename-input').value.trim();
-        if (newName) {
-          const oldNote = getNote(pos.word);
+        const oldWord = pos.word;
+        if (newName && newName !== oldWord) {
+          const oldKey = oldWord.toLowerCase();
+          const newKey = newName.toLowerCase();
           state.positions.forEach((p, i) => {
-            if (p.word === pos.word) state.positions[i].word = newName;
+            if (p.word === oldWord) state.positions[i].word = newName;
           });
-          if (oldNote) { setNote(newName, oldNote); delete state.notes[pos.word.toLowerCase()]; }
-          renameNoteDate(pos.word, newName);
-          renameNoteFolderKey(pos.word, newName);
-          touchWord(newName);
-          touchPos(newName);
-          recordDeletion(pos.word);
+          if (oldKey === newKey) {
+            // Changement de casse uniquement : la clé de stockage ne change pas,
+            // on met seulement à jour le mot affiché et les horodatages.
+            touchWord(newName);
+            touchPos(newName);
+          } else {
+            const oldNote = getNote(oldWord);
+            if (oldNote) setNote(newName, oldNote);
+            delete state.notes[oldKey];
+            renameNoteDate(oldWord, newName);
+            renameNoteFolderKey(oldWord, newName);
+            touchWord(newName);
+            touchPos(newName);
+            recordDeletion(oldWord);
+          }
           save();
         }
         hideModal();
