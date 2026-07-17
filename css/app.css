@@ -918,47 +918,57 @@ html, body {
   margin: 0 0 12px;
 }
 
-/* Compact feed cards */
+/* Compact feed cards : titre + image rognée uniquement (pas de texte) */
 .feed-list.compact {
   gap: 10px;
   max-width: 560px;
 }
 
 .feed-list.compact .feed-card {
-  padding: 12px 16px;
+  padding: 0;
   border-radius: 12px;
+  overflow: hidden;
 }
 
 .feed-list.compact .feed-card-header {
-  margin-bottom: 8px;
-  padding-bottom: 8px;
+  margin-bottom: 0;
+  padding: 12px 16px;
+  border-bottom: none;
 }
 
 .feed-list.compact .feed-card-title {
   font-size: 16px;
 }
 
-.feed-list.compact .feed-card-body {
-  font-size: 14px;
-  line-height: 1.45;
+/* Masquer tout le contenu texte : seule l'image reste visible */
+.feed-list.compact .feed-card-body.reading > div {
+  display: none;
 }
 
-.feed-list.compact .feed-card-body > div {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
+/* Image rognée au centre, rectangle pleine largeur de la carte */
 .feed-list.compact .feed-card-body.reading img.note-image {
-  max-height: 120px;
-  margin: 0 0 8px;
+  display: block;
+  width: 100%;
+  max-width: none;
+  height: 180px;
+  max-height: none;
+  object-fit: cover;
+  object-position: center;
+  margin: 0;
+  border-radius: 0;
+}
+
+/* Une seule image suffit en vue compacte : masquer les suivantes */
+.feed-list.compact .feed-card-body.reading img.note-image ~ img.note-image {
+  display: none;
 }
 
 .feed-list.compact .feed-card-body.reading .youtube-preview {
-  max-width: 240px;
-  height: 135px;
-  margin: 0 0 8px;
+  width: 100%;
+  max-width: none;
+  height: 180px;
+  margin: 0;
+  border-radius: 0;
 }
 
 .note-view .page-header {
