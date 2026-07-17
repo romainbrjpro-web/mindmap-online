@@ -1999,12 +1999,9 @@ function openAllNotesPage() {
         <div class="all-notes-toolbar">
           <button type="button" class="btn-icon" id="btn-folder-feed" title="Vue feed" style="display:none">📰</button>
           <button type="button" class="btn-icon" id="btn-new-folder" title="Nouveau dossier">📁</button>
-          <button type="button" class="btn-icon" id="btn-diaporama" title="Diaporama">📽️</button>
           <button type="button" class="btn-icon" id="btn-history" title="Historique">🕒</button>
           <button type="button" class="btn-icon js-theme-toggle" id="btn-theme" title="Thème">${state.isDark ? '☀️' : '🌙'}</button>
-          <button type="button" class="btn-icon" id="btn-export" title="Exporter">📥</button>
-          <button type="button" class="btn-icon" id="btn-backup" title="Sauvegarde">💾</button>
-          <button type="button" class="btn-icon" id="btn-settings" title="Paramètres API">⚙️</button>
+          <button type="button" class="btn-icon" id="btn-settings" title="Réglages">⚙️</button>
         </div>
         <input type="text" id="all-notes-search" class="all-notes-search" placeholder="Search in all notes..." value="">
         <div class="page-list" id="all-notes-list" style="overflow-y:auto"></div>
@@ -2038,11 +2035,8 @@ function openAllNotesPage() {
     $('#btn-folder-feed').addEventListener('click', () => {
       if (allNotesUI.currentFolderId) openFolderFeed(allNotesUI.currentFolderId);
     });
-    $('#btn-diaporama').addEventListener('click', openDiaporamaPage);
     $('#btn-history').addEventListener('click', openHistoryPage);
     $('#btn-theme').addEventListener('click', toggleTheme);
-    $('#btn-export').addEventListener('click', exportData);
-    $('#btn-backup').addEventListener('click', openBackupPage);
     $('#btn-settings').addEventListener('click', openSettingsPage);
 
     allNotesUI.built = true;
@@ -2513,12 +2507,18 @@ function openSettingsPage() {
     <label style="display:block;margin-bottom:8px;font-size:14px">OpenAI API Key</label>
     <input type="password" id="key-openai" value="${escapeHtml(state.apiKeys.openai)}" style="width:100%;padding:12px;border-radius:8px;border:1px solid rgba(128,128,128,0.3);background:var(--bg);color:var(--text);margin-bottom:16px">
     <button class="btn btn-primary btn-block" id="save-settings">Save</button>
-    <button class="btn btn-secondary btn-block" id="import-data" style="margin-top:12px">📂 Import JSON</button>
+
+    <h2 style="font-size:16px;margin:24px 0 12px">Données</h2>
+    <button class="btn btn-secondary btn-block" id="btn-export" style="margin-bottom:12px">📥 Exporter</button>
+    <button class="btn btn-secondary btn-block" id="btn-backup" style="margin-bottom:12px">💾 Sauvegarde</button>
+    <button class="btn btn-secondary btn-block" id="import-data">📂 Import JSON</button>
     <input type="file" id="import-file" accept=".json" style="display:none">
   `;
   page.classList.remove('hidden');
 
   $('#close-settings').addEventListener('click', () => page.classList.add('hidden'));
+  $('#btn-export').addEventListener('click', exportData);
+  $('#btn-backup').addEventListener('click', () => { page.classList.add('hidden'); openBackupPage(); });
   $('#save-settings').addEventListener('click', () => {
     state.apiKeys.deepseek = $('#key-deepseek').value.trim();
     state.apiKeys.openai = $('#key-openai').value.trim();
