@@ -851,6 +851,73 @@ html, body {
   border-top: none;
 }
 
+/* Folder feed (Facebook-like) */
+.feed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 640px;
+  margin: 0 auto;
+  padding-bottom: 48px;
+}
+
+.feed-card {
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 2px 12px var(--shadow);
+}
+
+.feed-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+.feed-card-title {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent);
+  cursor: pointer;
+  text-align: left;
+}
+
+.feed-card-title:hover {
+  text-decoration: underline;
+}
+
+.feed-card-date {
+  flex: 0 0 auto;
+  font-size: 12px;
+  opacity: 0.5;
+}
+
+.feed-card-body {
+  flex: none;
+  overflow: visible;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.feed-card-body.reading {
+  text-align: left;
+}
+
+.feed-card-body.reading img.note-image {
+  margin: 0 0 12px;
+}
+
+.feed-card-body.reading .youtube-preview {
+  margin: 0 0 12px;
+}
+
 .note-view .page-header {
   flex-direction: column;
   align-items: center;
