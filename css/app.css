@@ -918,6 +918,49 @@ html, body {
   margin: 0 0 12px;
 }
 
+/* Compact feed cards */
+.feed-list.compact {
+  gap: 10px;
+  max-width: 560px;
+}
+
+.feed-list.compact .feed-card {
+  padding: 12px 16px;
+  border-radius: 12px;
+}
+
+.feed-list.compact .feed-card-header {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+}
+
+.feed-list.compact .feed-card-title {
+  font-size: 16px;
+}
+
+.feed-list.compact .feed-card-body {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.feed-list.compact .feed-card-body > div {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.feed-list.compact .feed-card-body.reading img.note-image {
+  max-height: 120px;
+  margin: 0 0 8px;
+}
+
+.feed-list.compact .feed-card-body.reading .youtube-preview {
+  max-width: 240px;
+  height: 135px;
+  margin: 0 0 8px;
+}
+
 .note-view .page-header {
   flex-direction: column;
   align-items: center;

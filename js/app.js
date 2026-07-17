@@ -2086,13 +2086,15 @@ function openFolderFeed(folderId) {
     `;
   }).join('');
 
+  const compact = localStorage.getItem('feedCompact') === '1';
+
   page.innerHTML = `
     <div class="page-header page-header-centered">
-      <span class="header-side"></span>
+      <span class="header-side"><button type="button" class="btn-icon" id="btn-feed-density" title="Taille des cartes">${compact ? '🔎' : '📇'}</button></span>
       <h1>📰 ${escapeHtml(folderName)}</h1>
       <span class="header-side"><button type="button" class="btn-icon" id="btn-feed-close" title="Fermer">❌</button></span>
     </div>
-    <div class="feed-list">
+    <div class="feed-list${compact ? ' compact' : ''}">
       ${cards || '<p style="text-align:center;opacity:0.5;padding:40px">Aucune note dans ce dossier</p>'}
     </div>
   `;
@@ -2100,6 +2102,13 @@ function openFolderFeed(folderId) {
   page.classList.remove('hidden');
 
   $('#btn-feed-close').addEventListener('click', () => page.classList.add('hidden'));
+
+  $('#btn-feed-density').addEventListener('click', () => {
+    const list = page.querySelector('.feed-list');
+    const nowCompact = list.classList.toggle('compact');
+    localStorage.setItem('feedCompact', nowCompact ? '1' : '0');
+    $('#btn-feed-density').textContent = nowCompact ? '🔎' : '📇';
+  });
 
   page.querySelectorAll('.feed-card-title').forEach((btn) => {
     btn.addEventListener('click', () => {
