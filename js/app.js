@@ -34,7 +34,9 @@ const state = {
   apiKeys: { deepseek: '', openai: '' },
   noteDates: {},      // word (lowercase) -> ISO createdAt
   folders: [],        // { id, name, createdAt }
-  noteFolders: {},    // word (lowercase) -> folder id
+  noteFolders: {},    // word (lowercase) -> folder id (dossier d'origine)
+  noteExtraFolders: {},     // word (lowercase) -> [folder id, ...] (dossiers additionnels, note "copiée")
+  noteExtraFolderTimes: {}, // word (lowercase) -> last extra-folder change timestamp (ms)
   deletions: {},      // word (lowercase) -> deletion timestamp (ms) [tombstones]
   wordTimes: {},      // word (lowercase) -> last note edit timestamp (ms)
   posTimes: {},       // word (lowercase) -> last position change timestamp (ms)
@@ -188,6 +190,8 @@ function getSyncPayload() {
       noteDates: state.noteDates,
       folders: state.folders,
       noteFolders: state.noteFolders,
+      noteExtraFolders: state.noteExtraFolders,
+      noteExtraFolderTimes: state.noteExtraFolderTimes,
       deletions: state.deletions,
       wordTimes: state.wordTimes,
       posTimes: state.posTimes,
@@ -221,6 +225,8 @@ function applyData(data) {
   state.noteDates = s.noteDates || data.noteDates || {};
   state.folders = s.folders || data.folders || [];
   state.noteFolders = s.noteFolders || data.noteFolders || {};
+  state.noteExtraFolders = s.noteExtraFolders || data.noteExtraFolders || {};
+  state.noteExtraFolderTimes = s.noteExtraFolderTimes || data.noteExtraFolderTimes || {};
   state.deletions = s.deletions || data.deletions || {};
   state.wordTimes = s.wordTimes || data.wordTimes || {};
   state.posTimes = s.posTimes || data.posTimes || {};
@@ -247,6 +253,8 @@ function buildLocalData(updatedAt) {
     noteDates: state.noteDates,
     folders: state.folders,
     noteFolders: state.noteFolders,
+    noteExtraFolders: state.noteExtraFolders,
+    noteExtraFolderTimes: state.noteExtraFolderTimes,
     deletions: state.deletions,
     wordTimes: state.wordTimes,
     posTimes: state.posTimes,
@@ -323,6 +331,8 @@ function getSettingsFromStored(data) {
   return {
     folders: s.folders || data.folders || [],
     noteFolders: s.noteFolders || data.noteFolders || {},
+    noteExtraFolders: s.noteExtraFolders || data.noteExtraFolders || {},
+    noteExtraFolderTimes: s.noteExtraFolderTimes || data.noteExtraFolderTimes || {},
     noteDates: s.noteDates || data.noteDates || {},
     diaporamaList: s.diaporamaList || data.diaporamaList || [],
     deletions: s.deletions || data.deletions || {},
@@ -342,6 +352,8 @@ function applyMergedSettings(...settingsSources) {
   const merged = mergeSettings(...settingsSources);
   state.folders = merged.folders || [];
   state.noteFolders = merged.noteFolders || {};
+  state.noteExtraFolders = merged.noteExtraFolders || {};
+  state.noteExtraFolderTimes = merged.noteExtraFolderTimes || {};
   state.noteDates = merged.noteDates || {};
   state.diaporamaList = merged.diaporamaList || [];
   state.deletions = merged.deletions || {};
@@ -414,6 +426,9 @@ function pruneOrphanNotes() {
   Object.keys(state.noteFolders).forEach((key) => {
     if (!words.has(key)) delete state.noteFolders[key];
   });
+  Object.keys(state.noteExtraFolders).forEach((key) => {
+    if (!words.has(key)) delete state.noteExtraFolders[key];
+  });
 }
 
 function generateId() {
@@ -424,8 +439,40 @@ function getFolderById(id) {
   return state.folders.find((f) => f.id === id);
 }
 
+// Dossiers additionnels d'une note (note "copiée" dans d'autres dossiers).
+function getExtraFolders(word) {
+  return state.noteExtraFolders[word.toLowerCase()] || [];
+}
+
+// Une note appartient à un dossier via son dossier d'origine OU un dossier additionnel.
+function noteInFolder(word, folderId) {
+  return getNoteFolderId(word) === folderId || getExtraFolders(word).includes(folderId);
+}
+
 function countNotesInFolder(folderId) {
-  return Object.values(state.noteFolders).filter((fid) => fid === folderId).length;
+  return state.positions.filter((p) => noteInFolder(p.word, folderId)).length;
+}
+
+// Ajoute une note à un dossier (copie multi-dossiers), sans dupliquer le titre.
+// L'originale reste dans son dossier d'origine.
+function addNoteToFolder(word, folderId) {
+  const key = word.toLowerCase();
+  if (!folderId || getNoteFolderId(word) === folderId) return;
+  const list = state.noteExtraFolders[key] ? [...state.noteExtraFolders[key]] : [];
+  if (!list.includes(folderId)) list.push(folderId);
+  state.noteExtraFolders[key] = list;
+  state.noteExtraFolderTimes[key] = Date.now();
+  save();
+}
+
+// Retire une note d'un dossier additionnel (l'originale n'est pas concernée).
+function removeNoteFromExtraFolder(word, folderId) {
+  const key = word.toLowerCase();
+  const list = (state.noteExtraFolders[key] || []).filter((id) => id !== folderId);
+  if (list.length) state.noteExtraFolders[key] = list;
+  else delete state.noteExtraFolders[key];
+  state.noteExtraFolderTimes[key] = Date.now();
+  save();
 }
 
 function createFolder(name, parentId = null) {
@@ -465,6 +512,12 @@ function deleteFolder(folderId) {
       state.noteFolders[key] = null;
       state.noteFolderTimes[key] = Date.now();
     }
+  });
+  Object.keys(state.noteExtraFolders).forEach((key) => {
+    const kept = (state.noteExtraFolders[key] || []).filter((id) => !deadSet.has(id));
+    if (kept.length) state.noteExtraFolders[key] = kept;
+    else delete state.noteExtraFolders[key];
+    state.noteExtraFolderTimes[key] = Date.now();
   });
   deadIds.forEach((id) => {
     state.folderDeletions[id] = Date.now();
@@ -530,25 +583,6 @@ function setNoteFolder(word, folderId) {
   save();
 }
 
-// Copie une note dans un dossier sous un nouveau titre unique.
-// L'originale reste inchangée dans son dossier d'origine.
-function copyNoteToFolder(word, folderId) {
-  const content = state.notes[word.toLowerCase()] || '';
-  let title = `${word} (copie)`;
-  let n = 2;
-  while (state.positions.some((p) => p.word.toLowerCase() === title.toLowerCase())) {
-    title = `${word} (copie ${n++})`;
-  }
-  state.positions.push({ word: title, x: -state.offsetX, y: -state.offsetY, level: 0 });
-  ensureNoteDate(title);
-  touchWord(title);
-  touchPos(title);
-  setNote(title, content);
-  setNoteFolder(title, folderId);
-  save();
-  return title;
-}
-
 function renameNoteFolderKey(oldWord, newWord) {
   const oldKey = oldWord.toLowerCase();
   const newKey = newWord.toLowerCase();
@@ -557,6 +591,12 @@ function renameNoteFolderKey(oldWord, newWord) {
     state.noteFolderTimes[newKey] = Date.now();
     state.noteFolders[oldKey] = null;
     state.noteFolderTimes[oldKey] = Date.now();
+  }
+  if (state.noteExtraFolders[oldKey]) {
+    state.noteExtraFolders[newKey] = state.noteExtraFolders[oldKey];
+    state.noteExtraFolderTimes[newKey] = Date.now();
+    delete state.noteExtraFolders[oldKey];
+    state.noteExtraFolderTimes[oldKey] = Date.now();
   }
 }
 
@@ -627,6 +667,7 @@ function removeNotesForWords(words) {
       delete state.notes[key];
       delete state.noteDates[key];
       delete state.noteFolders[key];
+      delete state.noteExtraFolders[key];
       recordDeletion(word);
     }
   });
@@ -683,6 +724,7 @@ function applyTombstones() {
       delete state.notes[key];
       delete state.noteDates[key];
       delete state.noteFolders[key];
+      delete state.noteExtraFolders[key];
     });
     state.diaporamaList = (state.diaporamaList || []).filter((w) => !dead.has(w.toLowerCase()));
   }
@@ -718,6 +760,11 @@ function applyFolderTombstones() {
   state.folders = (state.folders || []).filter((f) => !deadFolders.has(f.id));
   Object.keys(state.noteFolders).forEach((key) => {
     if (deadFolders.has(state.noteFolders[key])) state.noteFolders[key] = null;
+  });
+  Object.keys(state.noteExtraFolders).forEach((key) => {
+    const kept = (state.noteExtraFolders[key] || []).filter((id) => !deadFolders.has(id));
+    if (kept.length) state.noteExtraFolders[key] = kept;
+    else delete state.noteExtraFolders[key];
   });
 }
 
@@ -1821,12 +1868,12 @@ function bindAllNotesDragDrop(updateList) {
       const word = state.positions[idx]?.word;
       const folderId = allNotesUI.currentFolderId;
       const searching = !!allNotesUI.searchQ.trim();
-      // En dossier + recherche : copier la note trouvée dans le dossier courant
-      // (au lieu de l'ouvrir), l'originale restant dans son dossier.
-      if (folderId && searching && word && getNoteFolderId(word) !== folderId) {
-        copyNoteToFolder(word, folderId);
+      // En dossier + recherche : ajouter la note trouvée au dossier courant
+      // (au lieu de l'ouvrir), l'originale restant dans son dossier d'origine.
+      if (folderId && searching && word && !noteInFolder(word, folderId)) {
+        addNoteToFolder(word, folderId);
         updateList();
-        showToast(`« ${word} » copiée dans ce dossier`);
+        showToast(`« ${word} » ajoutée à ce dossier`);
         if (Sync.isServerMode()) Sync.pushData(getSyncPayload()).catch(() => {});
         return;
       }
@@ -1892,11 +1939,10 @@ function openAllNotesPage() {
       .filter((p) => p.word.toLowerCase().includes(q))
       .filter((p) => {
         if (q) return true;
-        const folderId = getNoteFolderId(p.word);
         if (allNotesUI.currentFolderId) {
-          return folderId === allNotesUI.currentFolderId;
+          return noteInFolder(p.word, allNotesUI.currentFolderId);
         }
-        return !folderId;
+        return !getNoteFolderId(p.word);
       })
       .sort((a, b) => a.word.localeCompare(b.word));
   }
@@ -2010,17 +2056,11 @@ function openAllNotesPage() {
         `;
       }).join('');
 
-      const inFolderSearch = !!(allNotesUI.currentFolderId && allNotesUI.searchQ.trim());
-      const notesHtml = sorted.map((p) => {
-        const canCopy = inFolderSearch && getNoteFolderId(p.word) !== allNotesUI.currentFolderId;
-        const hint = canCopy ? `<span class="note-copy-hint">➕ copier ici</span>` : '';
-        return `
-        <div class="list-item note-item${canCopy ? ' copyable' : ''}" data-index="${p.index}" draggable="true">
+      const notesHtml = sorted.map((p) => `
+        <div class="list-item note-item" data-index="${p.index}" draggable="true">
           <span class="note-item-name">📝 ${escapeHtml(p.word)}</span>
-          ${hint}
         </div>
-      `;
-      }).join('');
+      `).join('');
 
       list.innerHTML = folderHtml + notesHtml;
       bindListItems();
@@ -2096,9 +2136,11 @@ function openAllNotesPage() {
 // Toutes les notes d'un dossier et de ses sous-dossiers, triées par titre.
 function getNotesInFolderTree(folderId) {
   const ids = new Set(getFolderWithDescendants(folderId));
+  const inTree = (word) => ids.has(getNoteFolderId(word))
+    || getExtraFolders(word).some((id) => ids.has(id));
   return state.positions
     .map((p, i) => ({ ...p, index: i }))
-    .filter((p) => ids.has(getNoteFolderId(p.word)))
+    .filter((p) => inTree(p.word))
     .sort((a, b) => a.word.localeCompare(b.word));
 }
 
@@ -2277,9 +2319,16 @@ function showMoveNoteToFolderModal(word) {
 
 function showNoteListActions(index) {
   const pos = state.positions[index];
+  const curFolder = allNotesUI.currentFolderId;
+  // La note est-elle présente ici uniquement en tant que copie (dossier additionnel) ?
+  const isExtraHere = curFolder && getExtraFolders(pos.word).includes(curFolder);
+  const removeExtraBtn = isExtraHere
+    ? `<button class="btn btn-block" id="remove-extra-folder">↩ Retirer de ce dossier</button>`
+    : '';
   showModal(`Actions for "${escapeHtml(pos.word)}"`, `
     <div class="modal-actions">
       <button class="btn btn-block btn-primary" id="move-note-folder">📁 Déplacer vers un dossier</button>
+      ${removeExtraBtn}
       <button class="btn btn-block btn-primary" id="rename-note">✏️ Rename</button>
       <button class="btn btn-block btn-danger" id="delete-note">🗑️ Delete Note</button>
     </div>
@@ -2288,6 +2337,12 @@ function showNoteListActions(index) {
   $('#move-note-folder').addEventListener('click', () => {
     hideModal();
     showMoveNoteToFolderModal(pos.word);
+  });
+
+  $('#remove-extra-folder')?.addEventListener('click', () => {
+    removeNoteFromExtraFolder(pos.word, curFolder);
+    hideModal();
+    openAllNotesPage();
   });
 
   $('#rename-note').addEventListener('click', () => {

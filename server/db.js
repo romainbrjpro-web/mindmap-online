@@ -423,6 +423,24 @@ const stmts = {
     return merged;
   },
 
+  mergeNoteExtraFolders(parsedSources) {
+    const byKey = new Map();
+    parsedSources.forEach((s, order) => {
+      const times = s.noteExtraFolderTimes || {};
+      Object.entries(s.noteExtraFolders || {}).forEach(([rawKey, value]) => {
+        const key = rawKey.toLowerCase();
+        const ts = Number(times[key]) || 0;
+        const existing = byKey.get(key);
+        if (!existing || ts > existing.ts || (ts === existing.ts && order >= existing.order)) {
+          byKey.set(key, { value: Array.isArray(value) ? value : [], ts, order });
+        }
+      });
+    });
+    const merged = {};
+    byKey.forEach((v, key) => { if (v.value.length) merged[key] = v.value; });
+    return merged;
+  },
+
   mergeFolders(...sources) {
     const byId = new Map();
     sources.forEach((folders) => {
@@ -527,6 +545,8 @@ const stmts = {
     const merged = { ...parsed[parsed.length - 1] };
     merged.folders = stmts.mergeFoldersByTime(parsed);
     merged.noteFolders = stmts.mergeNoteFoldersByTime(parsed);
+    merged.noteExtraFolders = stmts.mergeNoteExtraFolders(parsed);
+    merged.noteExtraFolderTimes = stmts.mergeTimestampMaps(...parsed.map((s) => s.noteExtraFolderTimes));
     merged.noteDates = stmts.mergeNoteDates(...parsed.map((s) => s.noteDates));
     merged.diaporamaList = stmts.mergeDiaporamaList(...parsed.map((s) => s.diaporamaList));
     merged.deletions = stmts.mergeTimestampMaps(...parsed.map((s) => s.deletions));
@@ -600,6 +620,13 @@ const stmts = {
           if (deadFolders.has(settings.noteFolders[key])) settings.noteFolders[key] = null;
         });
       }
+      if (settings.noteExtraFolders) {
+        Object.keys(settings.noteExtraFolders).forEach((key) => {
+          const kept = (settings.noteExtraFolders[key] || []).filter((id) => !deadFolders.has(id));
+          if (kept.length) settings.noteExtraFolders[key] = kept;
+          else delete settings.noteExtraFolders[key];
+        });
+      }
     }
 
     if (!dead.size) return { positions, notes, settings };
@@ -609,6 +636,7 @@ const stmts = {
     dead.forEach((key) => { delete cleanNotes[key]; });
     if (settings.noteDates) dead.forEach((key) => { delete settings.noteDates[key]; });
     if (settings.noteFolders) dead.forEach((key) => { delete settings.noteFolders[key]; });
+    if (settings.noteExtraFolders) dead.forEach((key) => { delete settings.noteExtraFolders[key]; });
     if (Array.isArray(settings.diaporamaList)) {
       settings.diaporamaList = settings.diaporamaList.filter((w) => !dead.has(String(w).toLowerCase()));
     }

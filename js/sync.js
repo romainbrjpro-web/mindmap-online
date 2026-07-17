@@ -196,6 +196,25 @@ function mergeNoteFoldersByTime(parsedSources) {
   return merged;
 }
 
+/** Fusion LWW des dossiers additionnels (note copiée) via noteExtraFolderTimes. */
+function mergeNoteExtraFolders(parsedSources) {
+  const byKey = new Map();
+  parsedSources.forEach((s, order) => {
+    const times = s.noteExtraFolderTimes || {};
+    Object.entries(s.noteExtraFolders || {}).forEach(([rawKey, value]) => {
+      const key = rawKey.toLowerCase();
+      const ts = Number(times[key]) || 0;
+      const existing = byKey.get(key);
+      if (!existing || ts > existing.ts || (ts === existing.ts && order >= existing.order)) {
+        byKey.set(key, { value: Array.isArray(value) ? value : [], ts, order });
+      }
+    });
+  });
+  const merged = {};
+  byKey.forEach((v, key) => { if (v.value.length) merged[key] = v.value; });
+  return merged;
+}
+
 function mergeDiaporamaList(...sources) {
   const seen = new Set();
   const list = [];
@@ -247,6 +266,8 @@ function mergeSettings(...sources) {
   const merged = { ...parsed[parsed.length - 1] };
   merged.folders = mergeFoldersByTime(parsed);
   merged.noteFolders = mergeNoteFoldersByTime(parsed);
+  merged.noteExtraFolders = mergeNoteExtraFolders(parsed);
+  merged.noteExtraFolderTimes = mergeTimestampMaps(...parsed.map((s) => s.noteExtraFolderTimes));
   merged.noteDates = mergeNoteDates(...parsed.map((s) => s.noteDates));
   merged.diaporamaList = mergeDiaporamaList(...parsed.map((s) => s.diaporamaList));
   merged.deletions = mergeTimestampMaps(...parsed.map((s) => s.deletions));

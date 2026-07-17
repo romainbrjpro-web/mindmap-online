@@ -497,7 +497,7 @@ html, body {
 .note-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 8px;
 }
 
@@ -506,17 +506,7 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.note-item.copyable {
-  border: 1px dashed var(--accent);
-}
-
-.note-copy-hint {
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent);
+  text-align: center;
 }
 
 .list-item-row {
