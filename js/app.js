@@ -530,6 +530,25 @@ function setNoteFolder(word, folderId) {
   save();
 }
 
+// Copie une note dans un dossier sous un nouveau titre unique.
+// L'originale reste inchangée dans son dossier d'origine.
+function copyNoteToFolder(word, folderId) {
+  const content = state.notes[word.toLowerCase()] || '';
+  let title = `${word} (copie)`;
+  let n = 2;
+  while (state.positions.some((p) => p.word.toLowerCase() === title.toLowerCase())) {
+    title = `${word} (copie ${n++})`;
+  }
+  state.positions.push({ word: title, x: -state.offsetX, y: -state.offsetY, level: 0 });
+  ensureNoteDate(title);
+  touchWord(title);
+  touchPos(title);
+  setNote(title, content);
+  setNoteFolder(title, folderId);
+  save();
+  return title;
+}
+
 function renameNoteFolderKey(oldWord, newWord) {
   const oldKey = oldWord.toLowerCase();
   const newKey = newWord.toLowerCase();
@@ -1797,7 +1816,22 @@ function bindAllNotesDragDrop(updateList) {
       clearAllNotesDropHighlights();
       setTimeout(() => { allNotesUI.dragNoteIndex = null; }, 50);
     });
-    item.addEventListener('click', () => openNote(+item.dataset.index, { newTab: true }));
+    item.addEventListener('click', () => {
+      const idx = +item.dataset.index;
+      const word = state.positions[idx]?.word;
+      const folderId = allNotesUI.currentFolderId;
+      const searching = !!allNotesUI.searchQ.trim();
+      // En dossier + recherche : copier la note trouvée dans le dossier courant
+      // (au lieu de l'ouvrir), l'originale restant dans son dossier.
+      if (folderId && searching && word && getNoteFolderId(word) !== folderId) {
+        copyNoteToFolder(word, folderId);
+        updateList();
+        showToast(`« ${word} » copiée dans ce dossier`);
+        if (Sync.isServerMode()) Sync.pushData(getSyncPayload()).catch(() => {});
+        return;
+      }
+      openNote(idx, { newTab: true });
+    });
     // Appui long → menu d'actions (renommer / déplacer / supprimer).
     attachLongPress(item, () => showNoteListActions(+item.dataset.index));
   });
@@ -1976,11 +2010,17 @@ function openAllNotesPage() {
         `;
       }).join('');
 
-      const notesHtml = sorted.map((p) => `
-        <div class="list-item note-item" data-index="${p.index}" draggable="true">
-          <div style="font-weight:600">📝 ${escapeHtml(p.word)}</div>
+      const inFolderSearch = !!(allNotesUI.currentFolderId && allNotesUI.searchQ.trim());
+      const notesHtml = sorted.map((p) => {
+        const canCopy = inFolderSearch && getNoteFolderId(p.word) !== allNotesUI.currentFolderId;
+        const hint = canCopy ? `<span class="note-copy-hint">➕ copier ici</span>` : '';
+        return `
+        <div class="list-item note-item${canCopy ? ' copyable' : ''}" data-index="${p.index}" draggable="true">
+          <span class="note-item-name">📝 ${escapeHtml(p.word)}</span>
+          ${hint}
         </div>
-      `).join('');
+      `;
+      }).join('');
 
       list.innerHTML = folderHtml + notesHtml;
       bindListItems();

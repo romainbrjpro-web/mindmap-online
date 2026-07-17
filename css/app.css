@@ -494,6 +494,31 @@ html, body {
 
 .list-item:hover { opacity: 1; }
 
+.note-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.note-item-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-item.copyable {
+  border: 1px dashed var(--accent);
+}
+
+.note-copy-hint {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
 .list-item-row {
   display: flex;
   align-items: center;
