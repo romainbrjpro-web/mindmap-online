@@ -510,7 +510,17 @@ html, body {
 .reorder-mode .list-item {
   cursor: grab;
   touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
   border: 1px dashed rgba(187, 134, 252, 0.6);
+}
+
+/* Pendant un glissement actif : couper toute sélection de texte parasite. */
+body.reordering-active,
+body.reordering-active * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  cursor: grabbing !important;
 }
 
 .reorder-mode .list-item::before {

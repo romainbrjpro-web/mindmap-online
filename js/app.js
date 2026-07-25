@@ -1942,50 +1942,51 @@ function bindAllNotesDragDrop(updateList) {
 
 // Mode réorganisation : glisser les items (au pointeur, souris + tactile) pour
 // définir l'ordre. Dossiers et notes se réordonnent chacun dans leur groupe.
+// Les écouteurs move/up sont posés sur `document` pour suivre le doigt/curseur
+// même lorsqu'il quitte l'item glissé.
 function bindReorder(list) {
-  let dragEl = null;
-  let dragType = null;
-
   list.querySelectorAll('.list-item').forEach((item) => {
     item.classList.add('reorderable');
     item.setAttribute('draggable', 'false');
-
-    item.addEventListener('pointerdown', (e) => {
-      if (e.pointerType === 'mouse' && e.button !== 0) return;
-      dragEl = item;
-      dragType = item.classList.contains('folder-item') ? 'folder' : 'note';
-      item.classList.add('reordering');
-      try { item.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
-      e.preventDefault();
-    });
-
-    item.addEventListener('pointermove', (e) => {
-      if (!dragEl || dragEl !== item) return;
-      e.preventDefault();
-      const y = e.clientY;
-      const sel = dragType === 'folder' ? '.folder-item' : '.note-item';
-      const siblings = [...list.querySelectorAll(sel)].filter((s) => s !== dragEl);
-      for (const sib of siblings) {
-        const r = sib.getBoundingClientRect();
-        if (y >= r.top && y <= r.bottom) {
-          const before = y < r.top + r.height / 2;
-          list.insertBefore(dragEl, before ? sib : sib.nextSibling);
-          break;
-        }
-      }
-    });
-
-    const end = (e) => {
-      if (!dragEl || dragEl !== item) return;
-      item.classList.remove('reordering');
-      try { item.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
-      dragEl = null;
-      dragType = null;
-      commitReorder(list);
-    };
-    item.addEventListener('pointerup', end);
-    item.addEventListener('pointercancel', end);
+    item.addEventListener('dragstart', (e) => e.preventDefault());
+    item.addEventListener('pointerdown', (e) => startReorderDrag(e, list, item));
   });
+}
+
+function startReorderDrag(e, list, item) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  e.preventDefault();
+  const dragType = item.classList.contains('folder-item') ? 'folder' : 'note';
+  const sel = dragType === 'folder' ? '.folder-item' : '.note-item';
+  item.classList.add('reordering');
+  document.body.classList.add('reordering-active');
+
+  const onMove = (ev) => {
+    ev.preventDefault();
+    const y = ev.clientY;
+    const siblings = [...list.querySelectorAll(sel)].filter((s) => s !== item);
+    for (const sib of siblings) {
+      const r = sib.getBoundingClientRect();
+      if (y >= r.top && y <= r.bottom) {
+        const before = y < r.top + r.height / 2;
+        list.insertBefore(item, before ? sib : sib.nextSibling);
+        break;
+      }
+    }
+  };
+
+  const onUp = () => {
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    document.removeEventListener('pointercancel', onUp);
+    item.classList.remove('reordering');
+    document.body.classList.remove('reordering-active');
+    commitReorder(list);
+  };
+
+  document.addEventListener('pointermove', onMove);
+  document.addEventListener('pointerup', onUp);
+  document.addEventListener('pointercancel', onUp);
 }
 
 // Enregistre l'ordre courant du DOM dans folderOrder/noteOrder (avec horodatage LWW).
