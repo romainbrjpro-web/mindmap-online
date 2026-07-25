@@ -441,6 +441,24 @@ const stmts = {
     return merged;
   },
 
+  mergeMapByTime(parsedSources, valueKey, timeKey) {
+    const byKey = new Map();
+    parsedSources.forEach((s, order) => {
+      const times = s[timeKey] || {};
+      Object.entries(s[valueKey] || {}).forEach(([rawKey, value]) => {
+        const key = rawKey.toLowerCase();
+        const ts = Number(times[key]) || 0;
+        const existing = byKey.get(key);
+        if (!existing || ts > existing.ts || (ts === existing.ts && order >= existing.order)) {
+          byKey.set(key, { value, ts, order });
+        }
+      });
+    });
+    const merged = {};
+    byKey.forEach((v, key) => { if (v.value != null) merged[key] = v.value; });
+    return merged;
+  },
+
   mergeFolders(...sources) {
     const byId = new Map();
     sources.forEach((folders) => {
@@ -547,6 +565,10 @@ const stmts = {
     merged.noteFolders = stmts.mergeNoteFoldersByTime(parsed);
     merged.noteExtraFolders = stmts.mergeNoteExtraFolders(parsed);
     merged.noteExtraFolderTimes = stmts.mergeTimestampMaps(...parsed.map((s) => s.noteExtraFolderTimes));
+    merged.folderOrder = stmts.mergeMapByTime(parsed, 'folderOrder', 'folderOrderTimes');
+    merged.folderOrderTimes = stmts.mergeTimestampMaps(...parsed.map((s) => s.folderOrderTimes));
+    merged.noteOrder = stmts.mergeMapByTime(parsed, 'noteOrder', 'noteOrderTimes');
+    merged.noteOrderTimes = stmts.mergeTimestampMaps(...parsed.map((s) => s.noteOrderTimes));
     merged.noteDates = stmts.mergeNoteDates(...parsed.map((s) => s.noteDates));
     merged.diaporamaList = stmts.mergeDiaporamaList(...parsed.map((s) => s.diaporamaList));
     merged.deletions = stmts.mergeTimestampMaps(...parsed.map((s) => s.deletions));

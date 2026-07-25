@@ -215,6 +215,25 @@ function mergeNoteExtraFolders(parsedSources) {
   return merged;
 }
 
+/** Fusion LWW générique d'une map { clé: valeur } via une map de timestamps. */
+function mergeMapByTime(parsedSources, valueKey, timeKey) {
+  const byKey = new Map();
+  parsedSources.forEach((s, order) => {
+    const times = s[timeKey] || {};
+    Object.entries(s[valueKey] || {}).forEach(([rawKey, value]) => {
+      const key = rawKey.toLowerCase();
+      const ts = Number(times[key]) || 0;
+      const existing = byKey.get(key);
+      if (!existing || ts > existing.ts || (ts === existing.ts && order >= existing.order)) {
+        byKey.set(key, { value, ts, order });
+      }
+    });
+  });
+  const merged = {};
+  byKey.forEach((v, key) => { if (v.value != null) merged[key] = v.value; });
+  return merged;
+}
+
 function mergeDiaporamaList(...sources) {
   const seen = new Set();
   const list = [];
@@ -268,6 +287,10 @@ function mergeSettings(...sources) {
   merged.noteFolders = mergeNoteFoldersByTime(parsed);
   merged.noteExtraFolders = mergeNoteExtraFolders(parsed);
   merged.noteExtraFolderTimes = mergeTimestampMaps(...parsed.map((s) => s.noteExtraFolderTimes));
+  merged.folderOrder = mergeMapByTime(parsed, 'folderOrder', 'folderOrderTimes');
+  merged.folderOrderTimes = mergeTimestampMaps(...parsed.map((s) => s.folderOrderTimes));
+  merged.noteOrder = mergeMapByTime(parsed, 'noteOrder', 'noteOrderTimes');
+  merged.noteOrderTimes = mergeTimestampMaps(...parsed.map((s) => s.noteOrderTimes));
   merged.noteDates = mergeNoteDates(...parsed.map((s) => s.noteDates));
   merged.diaporamaList = mergeDiaporamaList(...parsed.map((s) => s.diaporamaList));
   merged.deletions = mergeTimestampMaps(...parsed.map((s) => s.deletions));

@@ -37,6 +37,10 @@ const state = {
   noteFolders: {},    // word (lowercase) -> folder id (dossier d'origine)
   noteExtraFolders: {},     // word (lowercase) -> [folder id, ...] (dossiers additionnels, note "copiée")
   noteExtraFolderTimes: {}, // word (lowercase) -> last extra-folder change timestamp (ms)
+  folderOrder: {},    // folder id -> rang manuel (ordre personnalisé)
+  folderOrderTimes: {},// folder id -> timestamp du dernier changement d'ordre (ms)
+  noteOrder: {},      // word (lowercase) -> rang manuel (ordre personnalisé)
+  noteOrderTimes: {}, // word (lowercase) -> timestamp du dernier changement d'ordre (ms)
   deletions: {},      // word (lowercase) -> deletion timestamp (ms) [tombstones]
   wordTimes: {},      // word (lowercase) -> last note edit timestamp (ms)
   posTimes: {},       // word (lowercase) -> last position change timestamp (ms)
@@ -192,6 +196,10 @@ function getSyncPayload() {
       noteFolders: state.noteFolders,
       noteExtraFolders: state.noteExtraFolders,
       noteExtraFolderTimes: state.noteExtraFolderTimes,
+      folderOrder: state.folderOrder,
+      folderOrderTimes: state.folderOrderTimes,
+      noteOrder: state.noteOrder,
+      noteOrderTimes: state.noteOrderTimes,
       deletions: state.deletions,
       wordTimes: state.wordTimes,
       posTimes: state.posTimes,
@@ -227,6 +235,10 @@ function applyData(data) {
   state.noteFolders = s.noteFolders || data.noteFolders || {};
   state.noteExtraFolders = s.noteExtraFolders || data.noteExtraFolders || {};
   state.noteExtraFolderTimes = s.noteExtraFolderTimes || data.noteExtraFolderTimes || {};
+  state.folderOrder = s.folderOrder || data.folderOrder || {};
+  state.folderOrderTimes = s.folderOrderTimes || data.folderOrderTimes || {};
+  state.noteOrder = s.noteOrder || data.noteOrder || {};
+  state.noteOrderTimes = s.noteOrderTimes || data.noteOrderTimes || {};
   state.deletions = s.deletions || data.deletions || {};
   state.wordTimes = s.wordTimes || data.wordTimes || {};
   state.posTimes = s.posTimes || data.posTimes || {};
@@ -255,6 +267,10 @@ function buildLocalData(updatedAt) {
     noteFolders: state.noteFolders,
     noteExtraFolders: state.noteExtraFolders,
     noteExtraFolderTimes: state.noteExtraFolderTimes,
+    folderOrder: state.folderOrder,
+    folderOrderTimes: state.folderOrderTimes,
+    noteOrder: state.noteOrder,
+    noteOrderTimes: state.noteOrderTimes,
     deletions: state.deletions,
     wordTimes: state.wordTimes,
     posTimes: state.posTimes,
@@ -333,6 +349,10 @@ function getSettingsFromStored(data) {
     noteFolders: s.noteFolders || data.noteFolders || {},
     noteExtraFolders: s.noteExtraFolders || data.noteExtraFolders || {},
     noteExtraFolderTimes: s.noteExtraFolderTimes || data.noteExtraFolderTimes || {},
+    folderOrder: s.folderOrder || data.folderOrder || {},
+    folderOrderTimes: s.folderOrderTimes || data.folderOrderTimes || {},
+    noteOrder: s.noteOrder || data.noteOrder || {},
+    noteOrderTimes: s.noteOrderTimes || data.noteOrderTimes || {},
     noteDates: s.noteDates || data.noteDates || {},
     diaporamaList: s.diaporamaList || data.diaporamaList || [],
     deletions: s.deletions || data.deletions || {},
@@ -354,6 +374,10 @@ function applyMergedSettings(...settingsSources) {
   state.noteFolders = merged.noteFolders || {};
   state.noteExtraFolders = merged.noteExtraFolders || {};
   state.noteExtraFolderTimes = merged.noteExtraFolderTimes || {};
+  state.folderOrder = merged.folderOrder || {};
+  state.folderOrderTimes = merged.folderOrderTimes || {};
+  state.noteOrder = merged.noteOrder || {};
+  state.noteOrderTimes = merged.noteOrderTimes || {};
   state.noteDates = merged.noteDates || {};
   state.diaporamaList = merged.diaporamaList || [];
   state.deletions = merged.deletions || {};
@@ -437,6 +461,13 @@ function generateId() {
 
 function getFolderById(id) {
   return state.folders.find((f) => f.id === id);
+}
+
+// Compare deux rangs d'ordre manuel ; les éléments sans rang défini passent après.
+function orderCompare(a, b) {
+  const av = (a == null) ? Infinity : a;
+  const bv = (b == null) ? Infinity : b;
+  return av - bv;
 }
 
 // Dossiers additionnels d'une note (note "copiée" dans d'autres dossiers).
@@ -1816,6 +1847,7 @@ const allNotesUI = {
   currentFolderId: null,
   dragNoteIndex: null,
   dragMoved: false,
+  reorderMode: false,
 };
 
 function clearAllNotesDropHighlights() {
@@ -1908,6 +1940,76 @@ function bindAllNotesDragDrop(updateList) {
   });
 }
 
+// Mode réorganisation : glisser les items (au pointeur, souris + tactile) pour
+// définir l'ordre. Dossiers et notes se réordonnent chacun dans leur groupe.
+function bindReorder(list) {
+  let dragEl = null;
+  let dragType = null;
+
+  list.querySelectorAll('.list-item').forEach((item) => {
+    item.classList.add('reorderable');
+    item.setAttribute('draggable', 'false');
+
+    item.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      dragEl = item;
+      dragType = item.classList.contains('folder-item') ? 'folder' : 'note';
+      item.classList.add('reordering');
+      try { item.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      e.preventDefault();
+    });
+
+    item.addEventListener('pointermove', (e) => {
+      if (!dragEl || dragEl !== item) return;
+      e.preventDefault();
+      const y = e.clientY;
+      const sel = dragType === 'folder' ? '.folder-item' : '.note-item';
+      const siblings = [...list.querySelectorAll(sel)].filter((s) => s !== dragEl);
+      for (const sib of siblings) {
+        const r = sib.getBoundingClientRect();
+        if (y >= r.top && y <= r.bottom) {
+          const before = y < r.top + r.height / 2;
+          list.insertBefore(dragEl, before ? sib : sib.nextSibling);
+          break;
+        }
+      }
+    });
+
+    const end = (e) => {
+      if (!dragEl || dragEl !== item) return;
+      item.classList.remove('reordering');
+      try { item.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      dragEl = null;
+      dragType = null;
+      commitReorder(list);
+    };
+    item.addEventListener('pointerup', end);
+    item.addEventListener('pointercancel', end);
+  });
+}
+
+// Enregistre l'ordre courant du DOM dans folderOrder/noteOrder (avec horodatage LWW).
+function commitReorder(list) {
+  const now = Date.now();
+  let fi = 0;
+  let ni = 0;
+  list.querySelectorAll('.list-item').forEach((el) => {
+    if (el.dataset.folderId) {
+      state.folderOrder[el.dataset.folderId] = fi++;
+      state.folderOrderTimes[el.dataset.folderId] = now;
+    } else if (el.dataset.index != null) {
+      const word = state.positions[+el.dataset.index]?.word;
+      if (word) {
+        const key = word.toLowerCase();
+        state.noteOrder[key] = ni++;
+        state.noteOrderTimes[key] = now;
+      }
+    }
+  });
+  save();
+  if (Sync.isServerMode()) Sync.pushData(getSyncPayload()).catch(() => {});
+}
+
 function openAllNotesPage() {
   const page = $('#page-all-notes');
   document.body.classList.add('home-view');
@@ -1929,7 +2031,8 @@ function openAllNotesPage() {
         const parent = f.parentId && exists(f.parentId) ? f.parentId : null;
         return parent === current;
       })
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => orderCompare(state.folderOrder[a.id], state.folderOrder[b.id])
+        || a.name.localeCompare(b.name));
   }
 
   function getSorted() {
@@ -1944,7 +2047,8 @@ function openAllNotesPage() {
         }
         return !getNoteFolderId(p.word);
       })
-      .sort((a, b) => a.word.localeCompare(b.word));
+      .sort((a, b) => orderCompare(state.noteOrder[a.word.toLowerCase()], state.noteOrder[b.word.toLowerCase()])
+        || a.word.localeCompare(b.word));
   }
 
   function updateBreadcrumb() {
@@ -2063,8 +2167,12 @@ function openAllNotesPage() {
       `).join('');
 
       list.innerHTML = folderHtml + notesHtml;
-      bindListItems();
-      bindAllNotesDragDrop(updateList);
+      if (allNotesUI.reorderMode) {
+        bindReorder(list);
+      } else {
+        bindListItems();
+        bindAllNotesDragDrop(updateList);
+      }
     }
   }
 
@@ -2078,6 +2186,7 @@ function openAllNotesPage() {
         </div>
         <div class="all-notes-toolbar">
           <button type="button" class="btn-icon" id="btn-folder-feed" title="Vue feed" style="display:none">📰</button>
+          <button type="button" class="btn-icon" id="btn-reorder" title="Réorganiser (glisser-déposer)">↕️</button>
           <button type="button" class="btn-icon" id="btn-new-folder" title="Nouveau dossier">📁</button>
           <button type="button" class="btn-icon" id="btn-history" title="Historique">🕒</button>
           <button type="button" class="btn-icon js-theme-toggle" id="btn-theme" title="Thème">${state.isDark ? '☀️' : '🌙'}</button>
@@ -2114,6 +2223,16 @@ function openAllNotesPage() {
     });
     $('#btn-folder-feed').addEventListener('click', () => {
       if (allNotesUI.currentFolderId) openFolderFeed(allNotesUI.currentFolderId);
+    });
+    $('#btn-reorder').addEventListener('click', () => {
+      allNotesUI.reorderMode = !allNotesUI.reorderMode;
+      const btn = $('#btn-reorder');
+      btn.classList.toggle('active', allNotesUI.reorderMode);
+      page.classList.toggle('reorder-mode', allNotesUI.reorderMode);
+      showToast(allNotesUI.reorderMode
+        ? 'Mode réorganisation : glissez pour ordonner'
+        : 'Réorganisation terminée');
+      updateList();
     });
     $('#btn-history').addEventListener('click', openHistoryPage);
     $('#btn-theme').addEventListener('click', toggleTheme);

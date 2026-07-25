@@ -501,6 +501,31 @@ html, body {
   gap: 8px;
 }
 
+/* Mode réorganisation (glisser-déposer pour ordonner) */
+#btn-reorder.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.reorder-mode .list-item {
+  cursor: grab;
+  touch-action: none;
+  border: 1px dashed rgba(187, 134, 252, 0.6);
+}
+
+.reorder-mode .list-item::before {
+  content: "⠿";
+  margin-right: 8px;
+  opacity: 0.5;
+}
+
+.reorder-mode .list-item.reordering {
+  opacity: 0.85;
+  cursor: grabbing;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  transform: scale(1.02);
+}
+
 .note-item-name {
   font-weight: 600;
   overflow: hidden;
