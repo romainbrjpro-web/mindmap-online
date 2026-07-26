@@ -2826,13 +2826,12 @@ async function generateAI() {
         console.error('Sync after AI:', syncErr);
         showToast('Note générée — sync en attente');
       }
-      const parts = [];
-      if (data.imageModel) parts.push(data.imageModel);
-      if (data.warnings?.length) parts.push(`${data.warnings.length} avertissement`);
-      const msg = parts.length
-        ? `Note générée (${parts.join(', ')})`
-        : 'Génération IA terminée ✨';
-      showToast(msg);
+      if (data.warnings?.length) {
+        // Afficher la cause exacte (ex. erreur DeepSeek/OpenAI) pour diagnostic.
+        showToast(`⚠️ ${data.warnings.join(' | ')}`, 6000);
+      } else {
+        showToast('Génération IA terminée ✨');
+      }
       renderNoteView();
     } else {
       showToast('Génération échouée');

@@ -27,10 +27,15 @@ function saveImageDataUri(dataUri) {
   const mime = match[1].toLowerCase();
   const ext = MIME_EXT[mime] || 'png';
   const buffer = Buffer.from(match[2], 'base64');
+  // Refuser les images vides ou aberrantes (ex. réponse d'API dégénérée) pour
+  // ne jamais écrire un fichier 0 octet qui s'affichera comme image cassée.
+  if (buffer.length < 100) {
+    throw new Error(`Image vide ou invalide (${buffer.length} octets)`);
+  }
   const hash = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 32);
   const filename = `${hash}.${ext}`;
   const filePath = path.join(imagesDir, filename);
-  if (!fs.existsSync(filePath)) {
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).size === 0) {
     fs.writeFileSync(filePath, buffer);
   }
   return `/images/${filename}`;

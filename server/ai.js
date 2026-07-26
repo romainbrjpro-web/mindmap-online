@@ -55,15 +55,22 @@ async function generateText(deepseekKey, word) {
   const data = await apiFetch('https://api.deepseek.com/chat/completions', deepseekKey, {
     model: 'deepseek-chat',
     messages: [{ role: 'user', content: TEXT_PROMPT(word) }],
-    max_tokens: 200,
+    max_tokens: 400,
   });
-  return data.choices?.[0]?.message?.content || null;
+  const content = (data.choices?.[0]?.message?.content || '').trim();
+  if (!content) {
+    // Réponse vide : remonter la raison (ex. finish_reason, filtrage) au lieu de rien.
+    const reason = data.choices?.[0]?.finish_reason || 'réponse vide';
+    throw new Error(`DeepSeek n'a renvoyé aucun texte (${reason})`);
+  }
+  return content;
 }
 
 async function urlToDataUri(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error('Impossible de télécharger l\'image');
   const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length < 100) throw new Error('Image téléchargée vide');
   const mime = res.headers.get('content-type') || 'image/png';
   return `data:${mime};base64,${buf.toString('base64')}`;
 }
@@ -80,13 +87,18 @@ async function generateImage(openaiKey, word) {
   });
 
   const base64Image = data.data?.[0]?.b64_json;
-  if (base64Image) return `data:image/png;base64,${base64Image}`;
+  // Valider : un vrai PNG 1024×1024 pèse largement > 1 Ko en base64. Une chaîne
+  // courte = réponse dégénérée → on rejette pour éviter une image cassée.
+  if (base64Image && base64Image.length > 1000) {
+    return `data:image/png;base64,${base64Image}`;
+  }
 
   const url = data.data?.[0]?.url;
   if (url) return urlToDataUri(url);
 
   console.error('OpenAI image response:', JSON.stringify(data).slice(0, 800));
-  throw new Error('gpt-image-2: aucune image retournée (pas de b64_json)');
+  const reason = base64Image ? `image tronquée (${base64Image.length} car.)` : 'pas de b64_json';
+  throw new Error(`OpenAI: aucune image exploitable (${reason})`);
 }
 
 async function generateNote(deepseekKey, openaiKey, word) {

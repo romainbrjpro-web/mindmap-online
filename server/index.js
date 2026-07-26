@@ -284,14 +284,24 @@ app.post('/api/ai/generate', async (req, res) => {
 
   try {
     const result = await generateNote(dsKey, oaKey, word.trim());
+    result.warnings = result.warnings || [];
+    // Enregistrer l'image en fichier /images ; en cas d'échec, l'écarter (pas
+    // d'URL/base64 cassé dans la note) et signaler l'avertissement.
     if (result.image && result.image.startsWith('data:')) {
       try {
-        const url = saveImageDataUri(result.image);
-        result.image = url;
-        result.note = [url, result.text].filter(Boolean).join('\n\n');
+        result.image = saveImageDataUri(result.image);
       } catch (imgErr) {
-        console.error('Image save failed, keeping inline:', imgErr.message);
+        console.error('Image save failed:', imgErr.message);
+        result.warnings.push(`Image: ${imgErr.message}`);
+        result.image = null;
       }
+    }
+    // Reconstruire la note uniquement à partir des parties valides.
+    result.note = [result.image, result.text].filter(Boolean).join('\n\n');
+    if (!result.note) {
+      return res.status(502).json({
+        error: `Aucun contenu généré. ${result.warnings.join(' | ') || ''}`.trim(),
+      });
     }
     res.json(result);
   } catch (e) {
