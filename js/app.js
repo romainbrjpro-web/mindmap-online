@@ -2193,16 +2193,32 @@ function openAllNotesPage() {
           <button type="button" class="btn-icon js-theme-toggle" id="btn-theme" title="Thème">${state.isDark ? '☀️' : '🌙'}</button>
           <button type="button" class="btn-icon" id="btn-settings" title="Réglages">⚙️</button>
         </div>
-        <input type="text" id="all-notes-search" class="all-notes-search" placeholder="Search in all notes..." value="">
+        <div class="search-wrap">
+          <input type="text" id="all-notes-search" class="all-notes-search" placeholder="Search in all notes..." value="">
+          <button type="button" class="search-clear" id="clear-search" title="Effacer" aria-label="Effacer la recherche">✕</button>
+        </div>
         <div class="page-list" id="all-notes-list" style="overflow-y:auto"></div>
       </div>
     `;
 
     const searchInput = $('#all-notes-search');
+    const clearBtn = $('#clear-search');
+    const toggleClear = () => {
+      if (clearBtn) clearBtn.classList.toggle('visible', !!searchInput.value);
+    };
     searchInput.value = allNotesUI.searchQ;
+    toggleClear();
     searchInput.addEventListener('input', (e) => {
       allNotesUI.searchQ = e.target.value;
+      toggleClear();
       updateList();
+    });
+    clearBtn?.addEventListener('click', () => {
+      searchInput.value = '';
+      allNotesUI.searchQ = '';
+      toggleClear();
+      updateList();
+      searchInput.focus();
     });
 
     $('#btn-new-folder').addEventListener('click', () => {
@@ -2246,6 +2262,7 @@ function openAllNotesPage() {
     buildShell();
   } else {
     $('#all-notes-search').value = allNotesUI.searchQ;
+    $('#clear-search')?.classList.toggle('visible', !!allNotesUI.searchQ);
   }
 
   updateBreadcrumb();
