@@ -2962,37 +2962,69 @@ function insertTextAtCursor(textarea, text) {
 }
 
 // Colle une image du presse-papier en mode édition : upload + insertion de l'URL.
+// Transforme un data URI (image) en référence stockable : upload → URL /images,
+// ou repli allégé si l'upload échoue. Renvoie la référence à insérer.
+async function toStorableImageRef(dataUri) {
+  try {
+    return await uploadImageDataUri(dataUri);
+  } catch (err) {
+    console.error('Image upload failed, storing inline (léger):', err);
+    showToast('Image ajoutée (hors ligne)');
+    return prepareImageForUpload(dataUri);
+  }
+}
+
+// Insère une référence image (URL ou data URI) à la position du curseur.
+function insertImageRef(editor, word, ref) {
+  const caret = editor.selectionStart ?? editor.value.length;
+  const before = editor.value.slice(0, caret);
+  const prefix = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
+  insertTextAtCursor(editor, `${prefix}${ref}\n`);
+  setNote(word, editor.value, { immediate: true });
+  updateWikiSuggestions(editor);
+}
+
 async function handleEditorPaste(e, editor, word) {
-  const items = e.clipboardData?.items;
-  if (!items) return;
-  const imageItem = Array.from(items).find((it) => it.type && it.type.startsWith('image/'));
-  if (!imageItem) return; // pas d'image : laisser le collage de texte normal
+  const cd = e.clipboardData;
+  if (!cd) return;
 
-  e.preventDefault();
-  const file = imageItem.getAsFile();
-  if (!file) return;
-
-  showToast("Ajout de l'image…");
-  const reader = new FileReader();
-  reader.onload = async (ev) => {
-    let ref;
-    try {
-      ref = await uploadImageDataUri(ev.target.result);
-    } catch (err) {
-      console.error('Paste image upload failed, storing inline:', err);
-      // Repli hors ligne : ne stocker qu'une version allégée (migrée plus tard).
-      ref = await prepareImageForUpload(ev.target.result);
-      showToast('Image collée (hors ligne)');
+  // Cas 1 : image présente comme FICHIER dans le presse-papier.
+  const items = cd.items ? Array.from(cd.items) : [];
+  const imageItem = items.find((it) => it.type && it.type.startsWith('image/'));
+  if (imageItem) {
+    const file = imageItem.getAsFile();
+    if (file) {
+      e.preventDefault();
+      showToast("Ajout de l'image…");
+      const reader = new FileReader();
+      reader.onload = async (ev) => {
+        const ref = await toStorableImageRef(ev.target.result);
+        insertImageRef(editor, word, ref);
+        showToast('Image ajoutée');
+      };
+      reader.readAsDataURL(file);
+      return;
     }
-    const caret = editor.selectionStart ?? editor.value.length;
-    const before = editor.value.slice(0, caret);
-    const prefix = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
-    insertTextAtCursor(editor, `${prefix}${ref}\n`);
-    setNote(word, editor.value, { immediate: true });
-    updateWikiSuggestions(editor);
+  }
+
+  // Cas 2 : image collée sous forme de TEXTE contenant un/des data URI base64
+  // (fréquent quand on copie une image depuis une page web → C2PA, etc.).
+  const text = cd.getData('text/plain') || cd.getData('text') || cd.getData('text/html') || '';
+  if (text && /data:image\/[^;\s]+;base64,/i.test(text)) {
+    e.preventDefault();
+    const dataUriPattern = /data:image\/[^;\s]+;base64,[A-Za-z0-9+/=]+/g;
+    const uris = text.match(dataUriPattern) || [];
+    if (!uris.length) return;
+    showToast("Ajout de l'image…");
+    let out = text;
+    for (const uri of uris) {
+      const ref = await toStorableImageRef(uri);
+      out = out.split(uri).join(ref);
+    }
+    insertImageRef(editor, word, out);
     showToast('Image ajoutée');
-  };
-  reader.readAsDataURL(file);
+  }
+  // Sinon : collage de texte normal (pas de preventDefault).
 }
 
 function pickImage() {
@@ -3005,15 +3037,7 @@ function pickImage() {
     const reader = new FileReader();
     reader.onload = async (ev) => {
       const word = state.positions[state.editingIndex].word;
-      let ref;
-      try {
-        ref = await uploadImageDataUri(ev.target.result);
-      } catch (err) {
-        console.error('Image upload failed, storing inline:', err);
-        // Repli hors ligne : version allégée (migrée plus tard vers /images).
-        ref = await prepareImageForUpload(ev.target.result);
-        showToast('Image ajoutée (hors ligne)');
-      }
+      const ref = await toStorableImageRef(ev.target.result);
       const current = getNote(word);
       setNote(word, current ? `${current}\n${ref}` : ref, { immediate: true });
       renderNoteView();
