@@ -2900,12 +2900,52 @@ async function closeNote() {
   await syncPromise;
 }
 
+// Réduit une image (dataURI) avant upload : redimensionne à maxDim px sur le plus
+// grand côté et ré-encode en JPEG si l'image est volumineuse. Les petites images
+// sont conservées telles quelles. Objectif : uploads fiables (sans dépasser les
+// limites/timeouts du proxy) et sauvegarde/synchro légères.
+function prepareImageForUpload(dataUri, maxDim = 1600, quality = 0.85) {
+  return new Promise((resolve) => {
+    try {
+      if (typeof dataUri !== 'string' || !/^data:image\//i.test(dataUri)) {
+        return resolve(dataUri);
+      }
+      const small = dataUri.length < 300 * 1024; // < ~300 Ko : inutile de retoucher
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const maxSide = Math.max(img.width, img.height) || 1;
+          const scale = Math.min(1, maxDim / maxSide);
+          if (scale === 1 && small) return resolve(dataUri);
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          const out = canvas.toDataURL('image/jpeg', quality);
+          // Garder le résultat seulement s'il est réellement plus léger.
+          resolve(out && out.length < dataUri.length ? out : dataUri);
+        } catch (_) {
+          resolve(dataUri);
+        }
+      };
+      img.onerror = () => resolve(dataUri);
+      img.src = dataUri;
+    } catch (_) {
+      resolve(dataUri);
+    }
+  });
+}
+
 async function uploadImageDataUri(dataUri) {
-  if (!Sync.isServerMode()) return dataUri;
+  const prepared = await prepareImageForUpload(dataUri);
+  if (!Sync.isServerMode()) return prepared;
   const res = await fetch('/api/images', {
     method: 'POST',
     headers: Sync.headers,
-    body: JSON.stringify({ data: dataUri }),
+    body: JSON.stringify({ data: prepared }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Upload image échoué');
@@ -2935,11 +2975,13 @@ async function handleEditorPaste(e, editor, word) {
   showToast("Ajout de l'image…");
   const reader = new FileReader();
   reader.onload = async (ev) => {
-    let ref = ev.target.result;
+    let ref;
     try {
       ref = await uploadImageDataUri(ev.target.result);
     } catch (err) {
       console.error('Paste image upload failed, storing inline:', err);
+      // Repli hors ligne : ne stocker qu'une version allégée (migrée plus tard).
+      ref = await prepareImageForUpload(ev.target.result);
       showToast('Image collée (hors ligne)');
     }
     const caret = editor.selectionStart ?? editor.value.length;
@@ -2963,11 +3005,13 @@ function pickImage() {
     const reader = new FileReader();
     reader.onload = async (ev) => {
       const word = state.positions[state.editingIndex].word;
-      let ref = ev.target.result;
+      let ref;
       try {
         ref = await uploadImageDataUri(ev.target.result);
       } catch (err) {
         console.error('Image upload failed, storing inline:', err);
+        // Repli hors ligne : version allégée (migrée plus tard vers /images).
+        ref = await prepareImageForUpload(ev.target.result);
         showToast('Image ajoutée (hors ligne)');
       }
       const current = getNote(word);
