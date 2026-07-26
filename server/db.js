@@ -276,12 +276,32 @@ function collectReferencedImages() {
 
 // Supprime les images qui ne sont plus référencées nulle part (typiquement les
 // images remplacées lors d'une regénération IA). C'est ce qui libère le disque.
+// Délai de grâce : une image fraîchement uploadée existe sur le disque AVANT que
+// la note qui la référence soit synchronisée. On ne touche donc jamais aux
+// fichiers récents, sinon on supprimerait une image légitime en cours d'usage.
+const IMAGE_GRACE_MS = 24 * 60 * 60 * 1000;
+
 function pruneOrphanImages() {
-  if (!fs.existsSync(imagesDir)) return { deleted: 0, freedBytes: 0, kept: 0 };
+  if (!fs.existsSync(imagesDir)) {
+    return { deleted: 0, freedBytes: 0, kept: 0, skipped: 0 };
+  }
+
+  // Garde-fou : si aucune note n'est présente (store vide ou illisible), on ne
+  // supprime rien — sinon une lecture ratée effacerait toutes les images.
+  const row = stmts.getData(DEFAULT_USER_ID);
+  const notesRaw = row?.notes || '';
+  if (!notesRaw || notesRaw === '{}') {
+    console.warn('🛑 Purge images annulée : aucune note lisible (protection anti-perte)');
+    return { deleted: 0, freedBytes: 0, kept: 0, skipped: 0, aborted: true };
+  }
+
   const referenced = collectReferencedImages();
+  const now = Date.now();
   let deleted = 0;
   let freedBytes = 0;
   let kept = 0;
+  let skipped = 0;
+
   for (const file of fs.readdirSync(imagesDir)) {
     if (referenced.has(file)) {
       kept += 1;
@@ -289,13 +309,18 @@ function pruneOrphanImages() {
     }
     try {
       const filePath = path.join(imagesDir, file);
-      const size = fs.statSync(filePath).size;
+      const stat = fs.statSync(filePath);
+      // Fichier récent : potentiellement référencé par une note pas encore poussée.
+      if (now - stat.mtimeMs < IMAGE_GRACE_MS) {
+        skipped += 1;
+        continue;
+      }
       fs.unlinkSync(filePath);
       deleted += 1;
-      freedBytes += size;
+      freedBytes += stat.size;
     } catch { /* ignore */ }
   }
-  return { deleted, freedBytes, kept };
+  return { deleted, freedBytes, kept, skipped };
 }
 
 function getImagesInfo() {
