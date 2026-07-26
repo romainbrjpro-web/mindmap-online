@@ -232,6 +232,98 @@ function init() {
   ensureDefaultUser();
   autoRecoverIfEmpty();
   console.log(`📁 Données stockées dans : ${dataDir}`);
+
+  // Libérer l'espace disque au démarrage : supprimer les images orphelines
+  // (plus référencées par aucune note ni sauvegarde). Évite les ENOSPC.
+  try {
+    const pruned = pruneOrphanImages();
+    if (pruned.deleted > 0) {
+      const mb = (pruned.freedBytes / 1024 / 1024).toFixed(1);
+      console.log(`🧹 ${pruned.deleted} image(s) orpheline(s) supprimée(s), ${mb} Mo libérés (${pruned.kept} conservée(s))`);
+    }
+  } catch (e) {
+    console.error('Nettoyage images échoué :', e.message);
+  }
+}
+
+// Collecte toutes les références d'images (/images/xxx) présentes dans les notes
+// courantes ET dans les sauvegardes, afin de ne jamais supprimer une image encore
+// nécessaire à une restauration.
+function collectReferencedImages() {
+  const refs = new Set();
+  const scan = (text) => {
+    if (!text) return;
+    const found = String(text).match(/\/images\/[A-Za-z0-9._-]+/g) || [];
+    found.forEach((r) => refs.add(path.basename(r)));
+  };
+
+  try {
+    const row = stmts.getData(DEFAULT_USER_ID);
+    if (row) {
+      scan(row.notes);
+      scan(row.positions);
+      scan(row.settings);
+    }
+  } catch { /* ignore */ }
+
+  for (const file of listBackups()) {
+    try {
+      scan(fs.readFileSync(path.join(backupDir, file), 'utf8'));
+    } catch { /* ignore */ }
+  }
+  return refs;
+}
+
+// Supprime les images qui ne sont plus référencées nulle part (typiquement les
+// images remplacées lors d'une regénération IA). C'est ce qui libère le disque.
+function pruneOrphanImages() {
+  if (!fs.existsSync(imagesDir)) return { deleted: 0, freedBytes: 0, kept: 0 };
+  const referenced = collectReferencedImages();
+  let deleted = 0;
+  let freedBytes = 0;
+  let kept = 0;
+  for (const file of fs.readdirSync(imagesDir)) {
+    if (referenced.has(file)) {
+      kept += 1;
+      continue;
+    }
+    try {
+      const filePath = path.join(imagesDir, file);
+      const size = fs.statSync(filePath).size;
+      fs.unlinkSync(filePath);
+      deleted += 1;
+      freedBytes += size;
+    } catch { /* ignore */ }
+  }
+  return { deleted, freedBytes, kept };
+}
+
+function getImagesInfo() {
+  if (!fs.existsSync(imagesDir)) return { count: 0, bytes: 0, emptyCount: 0 };
+  let count = 0;
+  let bytes = 0;
+  let emptyCount = 0;
+  for (const file of fs.readdirSync(imagesDir)) {
+    try {
+      const size = fs.statSync(path.join(imagesDir, file)).size;
+      bytes += size;
+      count += 1;
+      if (size === 0) emptyCount += 1;
+    } catch { /* ignore */ }
+  }
+  return { count, bytes, emptyCount };
+}
+
+function getDiskInfo() {
+  try {
+    const s = fs.statfsSync(dataDir);
+    return {
+      totalBytes: s.blocks * s.bsize,
+      freeBytes: s.bavail * s.bsize,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function getStorageInfo() {
@@ -255,6 +347,8 @@ function getStorageInfo() {
     wordCount,
     backupCount: listBackups().length,
     sizeBytes: stats?.size || 0,
+    images: getImagesInfo(),
+    disk: getDiskInfo(),
     updated_at: row?.updated_at || null,
     warning: hasDisk ? null : 'Plan gratuit ou disque non monté — risque de perte de données',
   };
@@ -726,6 +820,7 @@ module.exports = {
   bcrypt,
   getStorageInfo,
   getDataVersion,
+  pruneOrphanImages,
   saveImageDataUri,
   readImageDataUri,
   writeImageFromDataUri,

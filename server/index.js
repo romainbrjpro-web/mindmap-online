@@ -4,7 +4,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
-const { init, stmts, getStorageInfo, getDataVersion, saveImageDataUri, readImageDataUri, writeImageFromDataUri, dataDir, imagesDir, DEFAULT_USER_ID, listBackupSnapshots, restoreFromBackup } = require('./db');
+const { init, stmts, getStorageInfo, getDataVersion, pruneOrphanImages, saveImageDataUri, readImageDataUri, writeImageFromDataUri, dataDir, imagesDir, DEFAULT_USER_ID, listBackupSnapshots, restoreFromBackup } = require('./db');
 
 function safeJsonParse(value, fallback) {
   if (value == null || value === '') return fallback;
@@ -250,6 +250,18 @@ app.get('/api/health', (_req, res) => {
 });
 
 // ─── Images ──────────────────────────────────────────────────────────────────
+
+// Libère l'espace disque : supprime les images plus référencées par aucune note
+// ni sauvegarde (typiquement les images remplacées par une regénération IA).
+app.post('/api/maintenance/prune-images', (_req, res) => {
+  try {
+    const pruned = pruneOrphanImages();
+    res.json({ ok: true, ...pruned, storage: getStorageInfo() });
+  } catch (e) {
+    console.error('POST /api/maintenance/prune-images:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 app.post('/api/images', (req, res) => {
   try {

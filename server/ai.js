@@ -51,9 +51,13 @@ async function apiFetch(url, apiKey, body) {
   return data;
 }
 
+// `deepseek-chat` a été retiré par DeepSeek : les modèles acceptés sont
+// deepseek-v4-flash (rapide/économique) et deepseek-v4-pro.
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash';
+
 async function generateText(deepseekKey, word) {
   const data = await apiFetch('https://api.deepseek.com/chat/completions', deepseekKey, {
-    model: 'deepseek-chat',
+    model: DEEPSEEK_MODEL,
     messages: [{ role: 'user', content: TEXT_PROMPT(word) }],
     max_tokens: 400,
   });
@@ -75,22 +79,48 @@ async function urlToDataUri(url) {
   return `data:${mime};base64,${buf.toString('base64')}`;
 }
 
+const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2';
+
+// Déduit le type MIME d'une image base64 via sa signature (le format renvoyé
+// dépend de output_format, on ne peut pas le supposer PNG).
+function detectImageMime(base64) {
+  if (base64.startsWith('/9j/')) return 'image/jpeg';
+  if (base64.startsWith('iVBORw0KGgo')) return 'image/png';
+  if (base64.startsWith('R0lGOD')) return 'image/gif';
+  if (base64.startsWith('UklGR')) return 'image/webp';
+  return 'image/png';
+}
+
 async function generateImage(openaiKey, word) {
   const imagePrompt = IMAGE_PROMPT(word);
-
-  const data = await apiFetch('https://api.openai.com/v1/images/generations', openaiKey, {
-    model: 'gpt-image-2',
+  const base = {
+    model: IMAGE_MODEL,
     prompt: imagePrompt,
     size: '1024x1024',
     quality: 'low',
     n: 1,
-  });
+  };
+
+  let data;
+  try {
+    // JPEG compressé : bien plus léger qu'un PNG 1024×1024, ce qui prolonge
+    // fortement la durée de vie du disque (cause des erreurs ENOSPC).
+    data = await apiFetch('https://api.openai.com/v1/images/generations', openaiKey, {
+      ...base,
+      output_format: 'jpeg',
+      output_compression: 70,
+    });
+  } catch (err) {
+    // Certains modèles refusent output_format : réessayer sans ces options.
+    console.error('output_format refusé, nouvel essai sans :', err.message);
+    data = await apiFetch('https://api.openai.com/v1/images/generations', openaiKey, base);
+  }
 
   const base64Image = data.data?.[0]?.b64_json;
   // Valider : un vrai PNG 1024×1024 pèse largement > 1 Ko en base64. Une chaîne
   // courte = réponse dégénérée → on rejette pour éviter une image cassée.
   if (base64Image && base64Image.length > 1000) {
-    return `data:image/png;base64,${base64Image}`;
+    return `data:${detectImageMime(base64Image)};base64,${base64Image}`;
   }
 
   const url = data.data?.[0]?.url;
@@ -122,7 +152,7 @@ async function generateNote(deepseekKey, openaiKey, word) {
   if (image) note += image;
   if (text) note += (note ? '\n\n' : '') + text;
 
-  return { note, text, image, imageModel: image ? 'gpt-image-2' : null, warnings: errors };
+  return { note, text, image, imageModel: image ? IMAGE_MODEL : null, warnings: errors };
 }
 
 module.exports = { generateNote };
