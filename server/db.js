@@ -561,7 +561,9 @@ const stmts = {
       });
     });
     const merged = {};
-    byKey.forEach((v, key) => { if (v.value.length) merged[key] = v.value; });
+    // Conserver les tableaux vides : pierres tombales empêchant une ancienne
+    // appartenance de dossier de ressusciter depuis un autre appareil.
+    byKey.forEach((v, key) => { merged[key] = v.value; });
     return merged;
   },
 

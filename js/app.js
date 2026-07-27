@@ -534,9 +534,10 @@ function addNoteToFolder(word, folderId) {
 // Retire une note d'un dossier additionnel (l'originale n'est pas concernée).
 function removeNoteFromExtraFolder(word, folderId) {
   const key = word.toLowerCase();
-  const list = (state.noteExtraFolders[key] || []).filter((id) => id !== folderId);
-  if (list.length) state.noteExtraFolders[key] = list;
-  else delete state.noteExtraFolders[key];
+  // Conserver un tableau vide (pierre tombale horodatée) plutôt que supprimer la
+  // clé : sinon la fusion LWW ne verrait rien à opposer à l'ancienne valeur du
+  // serveur et la note réapparaîtrait dans le dossier.
+  state.noteExtraFolders[key] = (state.noteExtraFolders[key] || []).filter((id) => id !== folderId);
   state.noteExtraFolderTimes[key] = Date.now();
   save();
 }
