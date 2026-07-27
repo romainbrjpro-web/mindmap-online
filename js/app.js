@@ -1986,7 +1986,16 @@ function bindReorder(list) {
     item.classList.add('reorderable');
     item.setAttribute('draggable', 'false');
     item.addEventListener('dragstart', (e) => e.preventDefault());
-    item.addEventListener('pointerdown', (e) => startReorderDrag(e, list, item));
+
+    // Poignée dédiée : seule zone qui capte le glisser. Le reste de la ligne
+    // garde le défilement tactile normal, sinon on ne peut plus atteindre le
+    // bas de la liste en mode réorganisation.
+    const handle = document.createElement('span');
+    handle.className = 'drag-handle';
+    handle.textContent = '⠿';
+    handle.setAttribute('aria-label', 'Déplacer');
+    item.insertBefore(handle, item.firstChild);
+    handle.addEventListener('pointerdown', (e) => startReorderDrag(e, list, item));
   });
 }
 
