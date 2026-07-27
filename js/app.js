@@ -470,6 +470,41 @@ function orderCompare(a, b) {
   return av - bv;
 }
 
+// Sous-dossiers directs de `parentId` (null = racine), dans l'ordre d'affichage.
+// Un dossier dont le parent a disparu est rattaché à la racine.
+function getChildFolders(parentId) {
+  const exists = (id) => state.folders.some((f) => f.id === id);
+  return state.folders
+    .filter((f) => {
+      const parent = f.parentId && exists(f.parentId) ? f.parentId : null;
+      return parent === (parentId || null);
+    })
+    .sort((a, b) => orderCompare(state.folderOrder[a.id], state.folderOrder[b.id])
+      || a.name.localeCompare(b.name));
+}
+
+// Notes contenues dans un dossier, dans l'ordre d'affichage de la liste.
+function getFolderNotes(folderId) {
+  return state.positions
+    .map((p, i) => ({ ...p, index: i }))
+    .filter((p) => noteInFolder(p.word, folderId))
+    .sort((a, b) => orderCompare(state.noteOrder[a.word.toLowerCase()], state.noteOrder[b.word.toLowerCase()])
+      || a.word.localeCompare(b.word));
+}
+
+function loadExpandedFolders() {
+  try {
+    const raw = localStorage.getItem('expandedFolders');
+    if (raw) allNotesUI.expandedFolders = new Set(JSON.parse(raw));
+  } catch (_) { /* ignore */ }
+}
+
+function saveExpandedFolders() {
+  try {
+    localStorage.setItem('expandedFolders', JSON.stringify([...allNotesUI.expandedFolders]));
+  } catch (_) { /* ignore */ }
+}
+
 // Dossiers additionnels d'une note (note "copiée" dans d'autres dossiers).
 function getExtraFolders(word) {
   return state.noteExtraFolders[word.toLowerCase()] || [];
@@ -1848,6 +1883,7 @@ const allNotesUI = {
   dragNoteIndex: null,
   dragMoved: false,
   reorderMode: false,
+  expandedFolders: new Set(),
 };
 
 function clearAllNotesDropHighlights() {
@@ -2024,16 +2060,7 @@ function openAllNotesPage() {
         .filter((f) => f.name.toLowerCase().includes(q))
         .sort((a, b) => a.name.localeCompare(b.name));
     }
-    const current = allNotesUI.currentFolderId || null;
-    const exists = (id) => state.folders.some((f) => f.id === id);
-    return state.folders
-      .filter((f) => {
-        // Parent effectif : la racine si pas de parent ou parent disparu (orphelin).
-        const parent = f.parentId && exists(f.parentId) ? f.parentId : null;
-        return parent === current;
-      })
-      .sort((a, b) => orderCompare(state.folderOrder[a.id], state.folderOrder[b.id])
-        || a.name.localeCompare(b.name));
+    return getChildFolders(allNotesUI.currentFolderId || null);
   }
 
   function getSorted() {
@@ -2098,6 +2125,19 @@ function openAllNotesPage() {
         showFolderActions(item.dataset.folderId);
       });
     });
+    // Chevron : déplie/replie sur place, sans ouvrir le dossier.
+    page.querySelectorAll('[data-toggle-folder]').forEach((btn) => {
+      // Isoler le chevron des gestes du dossier (appui long, glisser).
+      btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.toggleFolder;
+        if (allNotesUI.expandedFolders.has(id)) allNotesUI.expandedFolders.delete(id);
+        else allNotesUI.expandedFolders.add(id);
+        saveExpandedFolders();
+        updateList();
+      });
+    });
   }
 
   function updateList() {
@@ -2146,26 +2186,52 @@ function openAllNotesPage() {
 
     const list = $('#all-notes-list');
     if (list) {
-      const folderHtml = folders.map((f) => {
+      // Arborescence dépliable : désactivée pendant la recherche (résultats à
+      // plat) et pendant la réorganisation (réordonner un arbre est ambigu).
+      const treeMode = !allNotesUI.reorderMode && !allNotesUI.searchQ.trim();
+
+      const folderItemHtml = (f, depth) => {
         const count = countNotesInFolder(f.id);
-        const subCount = state.folders.filter((c) => c.parentId === f.id).length;
+        const subCount = getChildFolders(f.id).length;
         const meta = [
           subCount ? `${subCount} dossier${subCount !== 1 ? 's' : ''}` : '',
           `${count} note${count !== 1 ? 's' : ''}`,
         ].filter(Boolean).join(' · ');
+        const hasChildren = subCount > 0 || getFolderNotes(f.id).length > 0;
+        const expanded = allNotesUI.expandedFolders.has(f.id);
+        const toggle = treeMode && hasChildren
+          ? `<button type="button" class="folder-toggle" data-toggle-folder="${escapeHtml(f.id)}" aria-expanded="${expanded}" title="${expanded ? 'Replier' : 'Déplier'}">${expanded ? '▾' : '▸'}</button>`
+          : '';
         return `
-          <div class="list-item folder-item" data-folder-id="${escapeHtml(f.id)}">
+          <div class="list-item folder-item" data-folder-id="${escapeHtml(f.id)}" style="--depth:${depth}">
+            ${toggle}
             <span class="folder-name">📁 ${escapeHtml(f.name)}</span>
             <span class="folder-meta">${meta}</span>
           </div>
         `;
-      }).join('');
+      };
 
-      const notesHtml = sorted.map((p) => `
-        <div class="list-item note-item" data-index="${p.index}" draggable="true">
+      const noteItemHtml = (p, depth) => `
+        <div class="list-item note-item" data-index="${p.index}" draggable="true" style="--depth:${depth}">
           <span class="note-item-name">📝 ${escapeHtml(p.word)}</span>
         </div>
-      `).join('');
+      `;
+
+      // Rend récursivement les dossiers dépliés avec leurs sous-dossiers et notes.
+      const renderTree = (list_, depth) => list_.map((f) => {
+        let html = folderItemHtml(f, depth);
+        if (depth < 10 && allNotesUI.expandedFolders.has(f.id)) {
+          html += renderTree(getChildFolders(f.id), depth + 1);
+          html += getFolderNotes(f.id).map((p) => noteItemHtml(p, depth + 1)).join('');
+        }
+        return html;
+      }).join('');
+
+      const folderHtml = treeMode
+        ? renderTree(folders, 0)
+        : folders.map((f) => folderItemHtml(f, 0)).join('');
+
+      const notesHtml = sorted.map((p) => noteItemHtml(p, 0)).join('');
 
       list.innerHTML = folderHtml + notesHtml;
       if (allNotesUI.reorderMode) {
@@ -2200,6 +2266,8 @@ function openAllNotesPage() {
         <div class="page-list" id="all-notes-list" style="overflow-y:auto"></div>
       </div>
     `;
+
+    loadExpandedFolders();
 
     const searchInput = $('#all-notes-search');
     const clearBtn = $('#clear-search');
