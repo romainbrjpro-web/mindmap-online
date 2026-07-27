@@ -2278,7 +2278,9 @@ function getNotesInFolderTree(folderId) {
   return state.positions
     .map((p, i) => ({ ...p, index: i }))
     .filter((p) => inTree(p.word))
-    .sort((a, b) => a.word.localeCompare(b.word));
+    // Même tri que la liste : ordre manuel personnalisé, puis alphabétique.
+    .sort((a, b) => orderCompare(state.noteOrder[a.word.toLowerCase()], state.noteOrder[b.word.toLowerCase()])
+      || a.word.localeCompare(b.word));
 }
 
 // Vue « feed » : toutes les notes du dossier ouvertes et mises à plat,
