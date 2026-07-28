@@ -245,6 +245,7 @@ function applyData(data) {
   state.folderTimes = s.folderTimes || data.folderTimes || {};
   state.folderDeletions = s.folderDeletions || data.folderDeletions || {};
   state.noteFolderTimes = s.noteFolderTimes || data.noteFolderTimes || {};
+  migrateNoteOrderKeys();
   state.apiKeys = { deepseek: '', openai: '' };
   Object.keys(state.notes).forEach((key) => {
     state.notes[key] = noteToPlain(state.notes[key]);
@@ -386,6 +387,7 @@ function applyMergedSettings(...settingsSources) {
   state.folderTimes = merged.folderTimes || {};
   state.folderDeletions = merged.folderDeletions || {};
   state.noteFolderTimes = merged.noteFolderTimes || {};
+  migrateNoteOrderKeys();
   if (merged.zoom != null) state.zoom = merged.zoom;
   if (merged.offsetX != null) state.offsetX = merged.offsetX;
   if (merged.offsetY != null) state.offsetY = merged.offsetY;
@@ -483,13 +485,70 @@ function getChildFolders(parentId) {
       || a.name.localeCompare(b.name));
 }
 
+// Le rang d'une note n'a de sens que DANS un dossier donné : une même note peut
+// appartenir à plusieurs dossiers et y occuper des positions différentes. La clé
+// est donc « dossier::note », sinon les dossiers se marchent dessus (rangs
+// dupliqués → le tri retombe en alphabétique).
+function rankKey(folderId, word) {
+  return `${folderId || 'root'}::${word.toLowerCase()}`;
+}
+
+function getNoteRank(folderId, word) {
+  return state.noteOrder[rankKey(folderId, word)];
+}
+
+function setNoteRank(folderId, word, rank, ts) {
+  const k = rankKey(folderId, word);
+  state.noteOrder[k] = rank;
+  state.noteOrderTimes[k] = ts;
+}
+
+// Migre les anciens rangs globaux (clé = nom de note) vers « dossier::note ».
+// Les anciennes clés sont laissées en place : inertes, et les supprimer les
+// ferait ressusciter par la fusion LWW.
+function migrateNoteOrderKeys() {
+  let changed = false;
+  Object.keys(state.noteOrder).forEach((k) => {
+    if (k.includes('::')) return;
+    const nk = rankKey(state.noteFolders[k] || null, k);
+    if (state.noteOrder[nk] == null) {
+      state.noteOrder[nk] = state.noteOrder[k];
+      state.noteOrderTimes[nk] = state.noteOrderTimes[k] || Date.now();
+      changed = true;
+    }
+  });
+  return repairDuplicateRanks() || changed;
+}
+
+// Les anciens rangs globaux pouvaient collisionner dans un même dossier (une note
+// présente dans deux dossiers n'avait qu'un seul rang). À rangs égaux le tri
+// retombait en alphabétique. On renumérote 0..n-1 les dossiers concernés, en
+// conservant l'ordre affiché actuel. Sans effet une fois réparé.
+function repairDuplicateRanks() {
+  let changed = false;
+  const now = Date.now();
+  const contexts = [null, ...state.folders.map((f) => f.id)];
+  contexts.forEach((folderId) => {
+    const notes = getContextNotes(folderId);
+    const ranks = notes.map((p) => getNoteRank(folderId, p.word)).filter((r) => r != null);
+    if (ranks.length === new Set(ranks).size) return;
+    notes.forEach((p, i) => setNoteRank(folderId, p.word, i, now));
+    changed = true;
+  });
+  return changed;
+}
+
+function compareNotesInFolder(folderId, a, b) {
+  return orderCompare(getNoteRank(folderId, a.word), getNoteRank(folderId, b.word))
+    || a.word.localeCompare(b.word);
+}
+
 // Notes contenues dans un dossier, dans l'ordre d'affichage de la liste.
 function getFolderNotes(folderId) {
   return state.positions
     .map((p, i) => ({ ...p, index: i }))
     .filter((p) => noteInFolder(p.word, folderId))
-    .sort((a, b) => orderCompare(state.noteOrder[a.word.toLowerCase()], state.noteOrder[b.word.toLowerCase()])
-      || a.word.localeCompare(b.word));
+    .sort((a, b) => compareNotesInFolder(folderId, a, b));
 }
 
 // Notes du contexte d'affichage : celles du dossier, ou celles de la racine.
@@ -498,32 +557,20 @@ function getContextNotes(folderId) {
   return state.positions
     .map((p, i) => ({ ...p, index: i }))
     .filter((p) => !getNoteFolderId(p.word))
-    .sort((a, b) => orderCompare(state.noteOrder[a.word.toLowerCase()], state.noteOrder[b.word.toLowerCase()])
-      || a.word.localeCompare(b.word));
+    .sort((a, b) => compareNotesInFolder(null, a, b));
 }
 
-// Place une note en bas de la liste de son contexte. Une note neuve n'a aucun
-// rang : elle s'insérerait alphabétiquement au milieu. On lui attribue donc le
-// rang suivant, en figeant au besoin l'ordre visuel courant des autres notes.
+// Place une note en bas de la liste de son contexte. On réattribue toujours des
+// rangs 0..n consécutifs : cela garantit l'absence de doublons (qui feraient
+// retomber le tri en alphabétique) et met la nouvelle note en dernier.
 function placeNoteAtEnd(word) {
   const key = word.toLowerCase();
-  const siblings = getContextNotes(getNoteFolderId(word) || null)
+  const folderId = getNoteFolderId(word) || null;
+  const siblings = getContextNotes(folderId)
     .filter((p) => p.word.toLowerCase() !== key);
   const now = Date.now();
-  const allRanked = siblings.every((p) => state.noteOrder[p.word.toLowerCase()] != null);
-
-  if (allRanked) {
-    const max = siblings.reduce((m, p) => Math.max(m, state.noteOrder[p.word.toLowerCase()]), -1);
-    state.noteOrder[key] = max + 1;
-  } else {
-    siblings.forEach((p, i) => {
-      const k = p.word.toLowerCase();
-      state.noteOrder[k] = i;
-      state.noteOrderTimes[k] = now;
-    });
-    state.noteOrder[key] = siblings.length;
-  }
-  state.noteOrderTimes[key] = now;
+  siblings.forEach((p, i) => setNoteRank(folderId, p.word, i, now));
+  setNoteRank(folderId, word, siblings.length, now);
 }
 
 function loadExpandedFolders() {
@@ -2081,11 +2128,8 @@ function commitReorder(list) {
       state.folderOrderTimes[el.dataset.folderId] = now;
     } else if (el.dataset.index != null) {
       const word = state.positions[+el.dataset.index]?.word;
-      if (word) {
-        const key = word.toLowerCase();
-        state.noteOrder[key] = ni++;
-        state.noteOrderTimes[key] = now;
-      }
+      // Rang relatif au dossier affiché (la racine si aucun n'est ouvert).
+      if (word) setNoteRank(allNotesUI.currentFolderId || null, word, ni++, now);
     }
   });
   save();
@@ -2120,8 +2164,7 @@ function openAllNotesPage() {
         }
         return !getNoteFolderId(p.word);
       })
-      .sort((a, b) => orderCompare(state.noteOrder[a.word.toLowerCase()], state.noteOrder[b.word.toLowerCase()])
-        || a.word.localeCompare(b.word));
+      .sort((a, b) => compareNotesInFolder(allNotesUI.currentFolderId || null, a, b));
   }
 
   function updateBreadcrumb() {
@@ -2393,9 +2436,12 @@ function getNotesInFolderTree(folderId) {
   return state.positions
     .map((p, i) => ({ ...p, index: i }))
     .filter((p) => inTree(p.word))
-    // Même tri que la liste : ordre manuel personnalisé, puis alphabétique.
-    .sort((a, b) => orderCompare(state.noteOrder[a.word.toLowerCase()], state.noteOrder[b.word.toLowerCase()])
-      || a.word.localeCompare(b.word));
+    // Même tri que la liste : rang dans le dossier affiché, sinon rang dans le
+    // dossier d'origine de la note (le feed aplatit les sous-dossiers).
+    .sort((a, b) => {
+      const rank = (p) => getNoteRank(folderId, p.word) ?? getNoteRank(getNoteFolderId(p.word), p.word);
+      return orderCompare(rank(a), rank(b)) || a.word.localeCompare(b.word);
+    });
 }
 
 // Vue « feed » : toutes les notes du dossier ouvertes et mises à plat,
