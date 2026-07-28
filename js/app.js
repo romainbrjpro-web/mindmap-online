@@ -492,6 +492,40 @@ function getFolderNotes(folderId) {
       || a.word.localeCompare(b.word));
 }
 
+// Notes du contexte d'affichage : celles du dossier, ou celles de la racine.
+function getContextNotes(folderId) {
+  if (folderId) return getFolderNotes(folderId);
+  return state.positions
+    .map((p, i) => ({ ...p, index: i }))
+    .filter((p) => !getNoteFolderId(p.word))
+    .sort((a, b) => orderCompare(state.noteOrder[a.word.toLowerCase()], state.noteOrder[b.word.toLowerCase()])
+      || a.word.localeCompare(b.word));
+}
+
+// Place une note en bas de la liste de son contexte. Une note neuve n'a aucun
+// rang : elle s'insérerait alphabétiquement au milieu. On lui attribue donc le
+// rang suivant, en figeant au besoin l'ordre visuel courant des autres notes.
+function placeNoteAtEnd(word) {
+  const key = word.toLowerCase();
+  const siblings = getContextNotes(getNoteFolderId(word) || null)
+    .filter((p) => p.word.toLowerCase() !== key);
+  const now = Date.now();
+  const allRanked = siblings.every((p) => state.noteOrder[p.word.toLowerCase()] != null);
+
+  if (allRanked) {
+    const max = siblings.reduce((m, p) => Math.max(m, state.noteOrder[p.word.toLowerCase()]), -1);
+    state.noteOrder[key] = max + 1;
+  } else {
+    siblings.forEach((p, i) => {
+      const k = p.word.toLowerCase();
+      state.noteOrder[k] = i;
+      state.noteOrderTimes[k] = now;
+    });
+    state.noteOrder[key] = siblings.length;
+  }
+  state.noteOrderTimes[key] = now;
+}
+
 function loadExpandedFolders() {
   try {
     const raw = localStorage.getItem('expandedFolders');
@@ -1252,6 +1286,7 @@ function addWord(word, x, y) {
   if (existing && getNote(existing.word)) {
     setNote(word, getNote(existing.word));
   }
+  placeNoteAtEnd(word);
   state.selected = new Set([state.positions.length - 1]);
   save();
   render();
@@ -2170,6 +2205,8 @@ function openAllNotesPage() {
           addWord(word, -state.offsetX, -state.offsetY);
           if (allNotesUI.currentFolderId) {
             setNoteFolder(word, allNotesUI.currentFolderId);
+            // Re-placer en bas : le contexte est le dossier, pas la racine.
+            placeNoteAtEnd(word);
           }
           if (Sync.isServerMode()) {
             try {
